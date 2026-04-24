@@ -650,9 +650,8 @@ function Forecast({company}) {
 
   const doForecast = async () => {
     setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0);
-    let i=0;
     loadRef.current = setInterval(()=>{
-      i++; setLoadMsg(i%LOADING_MSGS.length);
+      setLoadMsg(m => Math.min(m + 1, LOADING_MSGS.length - 1));
     },2000);
 
     try {
