@@ -80,7 +80,42 @@ def _get_json(url: str, *, params: dict | None = None, timeout: int = 30) -> dic
         raise RuntimeError(f"Non-JSON response for {url} status={r.status_code} ct={ct} preview={preview!r}") from e
 
 
-def fetch_moex_history(secid: str, start: str, end: Optional[str]) -> pd.DataFrame:
+
+
+def fetch_moex_candles_moexalgo(secid: str, start: str, end: Optional[str]) -> pd.DataFrame:
+    """Fetch daily candles via moexalgo (often faster/less chatty than raw ISS pagination)."""
+    try:
+        from moexalgo import Ticker  # type: ignore
+
+        df = pd.DataFrame(Ticker(secid).candles(start=str(start), end=str(end) if end else None, period="1D"))
+        if df.empty:
+            return df
+        df["begin"] = pd.to_datetime(df["begin"], errors="coerce")
+        df = df.dropna(subset=["begin"]).drop_duplicates(subset=["begin"]).sort_values("begin")
+
+        out = pd.DataFrame(
+            {
+                "date": df["begin"].dt.normalize(),
+                "OPEN": pd.to_numeric(df.get("open"), errors="coerce"),
+                "HIGH": pd.to_numeric(df.get("high"), errors="coerce"),
+                "LOW": pd.to_numeric(df.get("low"), errors="coerce"),
+                "CLOSE": pd.to_numeric(df.get("close"), errors="coerce"),
+                "VOLUME": pd.to_numeric(df.get("volume"), errors="coerce"),
+                "VALUE": pd.to_numeric(df.get("value"), errors="coerce") if "value" in df.columns else np.nan,
+            }
+        )
+        out = out.dropna(subset=["date", "CLOSE", "HIGH", "LOW", "VOLUME"]).reset_index(drop=True)
+        return out
+    except Exception:
+        return pd.DataFrame()
+
+
+def fetch_moex_ohlcv(secid: str, start: str, end: Optional[str]) -> pd.DataFrame:
+    """Best-effort OHLCV loader. Currently uses MOEX ISS only for reliability."""
+    return fetch_moex_history(secid, start, end)
+
+
+def fetch_moex_history(secid: str, start: str, end: Optional[str], *, progress_cb=None) -> pd.DataFrame:
     """Fetch OHLCV via MOEX ISS history."""
     url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/securities/{secid}.json"
 
@@ -101,6 +136,11 @@ def fetch_moex_history(secid: str, start: str, end: Optional[str]) -> pd.DataFra
         block = j.get("history", {})
         cols = block.get("columns", cols)
         data = block.get("data", [])
+        if callable(progress_cb):
+            try:
+                progress_cb(start_pos=start_pos, batch_len=len(data))
+            except Exception:
+                pass
         if not data:
             break
         all_rows.extend(data)
@@ -284,7 +324,7 @@ def api_quote(ticker: str) -> Dict[str, Any]:
     if cached is not None:
         return cached
 
-    df = fetch_moex_history(t, start=PRED_START, end=None)
+    df = fetch_moex_ohlcv(t, start=PRED_START, end=None)
     if df.empty or len(df) < 2:
         raise HTTPException(status_code=404, detail=f"No MOEX history for ticker={t}")
 
@@ -319,7 +359,12 @@ def _compute_prediction(ticker: str, *, horizon_days: int, job_id: str | None = 
         raise HTTPException(status_code=400, detail="This model supports only horizon_days=5")
 
     step("fetch_moex_history")
-    df_price = fetch_moex_history(t, start=PRED_START, end=None)
+    df_price = fetch_moex_history(
+        t,
+        start=PRED_START,
+        end=None,
+        progress_cb=(lambda start_pos, batch_len: _job_set(job_id, status='running', step=f'fetch_moex_history:{start_pos}')) if job_id else None,
+    )
     if df_price.empty:
         raise HTTPException(status_code=404, detail=f"No MOEX history for ticker={t}")
 

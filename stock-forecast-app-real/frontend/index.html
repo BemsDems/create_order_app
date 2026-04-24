@@ -674,7 +674,8 @@ function Forecast({company}) {
       while(true){
         tries++;
         const st = await apiJson(`/api/predict_job/${jobId}`);
-        const msgIdx = stepToMsg[st.step] ?? 0;
+        const key = String(st.step||'');
+        const msgIdx = (key.startsWith('fetch_moex_history') ? 0 : (stepToMsg[key] ?? 0));
         setLoadMsg(msgIdx);
 
         if(st.status === 'done'){
