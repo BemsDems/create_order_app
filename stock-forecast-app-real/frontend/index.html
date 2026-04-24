@@ -650,55 +650,87 @@ function Forecast({company}) {
 
   const doForecast = async () => {
     setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0);
-    loadRef.current = setInterval(()=>{
-      setLoadMsg(m => Math.min(m + 1, LOADING_MSGS.length - 1));
-    },2000);
+
+    const stepToMsg = {
+      queued: 0,
+      starting: 0,
+      fetch_moex_history: 0,
+      fetch_cbr_usdrub: 1,
+      feature_engineering: 2,
+      load_model: 2,
+      scaling: 2,
+      model_predict: 3,
+      done: 3,
+      error: 3,
+    };
 
     try {
-      const [pred, q] = await Promise.all([
-        apiJson(`/api/predict/${company.ticker}?horizon_days=${horizon}`),
-        apiJson(`/api/quote/${company.ticker}`),
-      ]);
+      // Start async job
+      const start = await apiJson(`/api/predict_job/${company.ticker}?horizon_days=${horizon}`);
+      const jobId = start.job_id;
 
-      const prob = Math.round((pred.prob_up_5d || 0) * 100);
-      let verdict, verdictColor;
-      if(pred.verdict === 'рост'){ verdict='Вероятен рост'; verdictColor='success'; }
-      else if(pred.verdict === 'снижение'){ verdict='Вероятно снижение'; verdictColor='danger'; }
-      else { verdict='Нейтрально'; verdictColor='warning'; }
+      // Poll until done/error
+      let tries = 0;
+      while(true){
+        tries++;
+        const st = await apiJson(`/api/predict_job/${jobId}`);
+        const msgIdx = stepToMsg[st.step] ?? 0;
+        setLoadMsg(msgIdx);
 
-      const f = pred.features_last || {};
-      const clamp01 = (x)=> Math.max(0, Math.min(1, x));
-      const impactFrom = (x, scale=1)=> Math.round(20 + 80*clamp01(Math.abs(x)*scale));
+        if(st.status === 'done'){
+          const pred = st.result;
+          const q = await apiJson(`/api/quote/${company.ticker}`);
 
-      const factors = FACTOR_NAMES.map(ff=>{
-        if(ff.key==='volatility') return { ...ff, impact: impactFrom(f.volatility_20||0, 20), positive: (f.volatility_20||0) < 0.02 };
-        if(ff.key==='trend') return { ...ff, impact: impactFrom(f.price_vs_sma50||0, 8), positive: (f.price_vs_sma50||0) >= 0 };
-        if(ff.key==='volume') return { ...ff, impact: impactFrom((f.volume_ratio||1)-1, 2), positive: (f.volume_ratio||1) >= 1 };
-        if(ff.key==='usd') return { ...ff, impact: impactFrom(f.usd_ret_5d||0, 15), positive: (f.usd_ret_5d||0) <= 0 };
-        if(ff.key==='imoex') return { ...ff, impact: impactFrom(f.ret_5d||0, 10), positive: (f.ret_5d||0) >= 0 };
-        if(ff.key==='dividend') return { ...ff, impact: 35, positive: true };
-        return { ...ff, impact: 40, positive: true };
-      });
+          const prob = Math.round((pred.prob_up_5d || 0) * 100);
+          let verdict, verdictColor;
+          if(pred.verdict === 'рост'){ verdict='Вероятен рост'; verdictColor='success'; }
+          else if(pred.verdict === 'снижение'){ verdict='Вероятно снижение'; verdictColor='danger'; }
+          else { verdict='Нейтрально'; verdictColor='warning'; }
 
-      const companyName = company?.name || company?.ticker;
-      const explanation = (prob>=55)
-        ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней оценивается в ${prob}%.`
-        : (prob<=45)
-          ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней низкая (p=${prob}%).`
-          : `По реальным данным MOEX/ЦБ модель даёт нейтральный сигнал для ${companyName} (p=${prob}%).`;
+          const f = pred.features_last || {};
+          const clamp01 = (x)=> Math.max(0, Math.min(1, x));
+          const impactFrom = (x, scale=1)=> Math.round(20 + 80*clamp01(Math.abs(x)*scale));
 
-      setResult({
-        prob,
-        verdict,
-        verdictColor,
-        confidence: 'модель',
-        confVal: prob,
-        auc: 0.0,
-        factors,
-        explanation,
-        currentPrice: q.price,
-        dayChange: q.change_1d*100,
-      });
+          const factors = FACTOR_NAMES.map(ff=>{
+            if(ff.key==='volatility') return { ...ff, impact: impactFrom(f.volatility_20||0, 20), positive: (f.volatility_20||0) < 0.02 };
+            if(ff.key==='trend') return { ...ff, impact: impactFrom(f.price_vs_sma50||0, 8), positive: (f.price_vs_sma50||0) >= 0 };
+            if(ff.key==='volume') return { ...ff, impact: impactFrom((f.volume_ratio||1)-1, 2), positive: (f.volume_ratio||1) >= 1 };
+            if(ff.key==='usd') return { ...ff, impact: impactFrom(f.usd_ret_5d||0, 15), positive: (f.usd_ret_5d||0) <= 0 };
+            if(ff.key==='imoex') return { ...ff, impact: impactFrom(f.ret_5d||0, 10), positive: (f.ret_5d||0) >= 0 };
+            if(ff.key==='dividend') return { ...ff, impact: 35, positive: true };
+            return { ...ff, impact: 40, positive: true };
+          });
+
+          const companyName = company?.name || company?.ticker;
+          const explanation = (prob>=55)
+            ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней оценивается в ${prob}%.`
+            : (prob<=45)
+              ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней низкая (p=${prob}%).`
+              : `По реальным данным MOEX/ЦБ модель даёт нейтральный сигнал для ${companyName} (p=${prob}%).`;
+
+          setResult({
+            prob,
+            verdict,
+            verdictColor,
+            confidence: 'модель',
+            confVal: prob,
+            auc: 0.0,
+            factors,
+            explanation,
+            currentPrice: q.price,
+            dayChange: q.change_1d*100,
+          });
+          break;
+        }
+
+        if(st.status === 'error'){
+          throw new Error(st?.error?.detail || st?.error?.message || 'unknown error');
+        }
+
+        // avoid tight loop
+        await new Promise(r=>setTimeout(r, 400));
+        if(tries > 200) throw new Error('timeout');
+      }
     } catch (e) {
       setResult({
         prob: 0,
@@ -713,7 +745,6 @@ function Forecast({company}) {
         dayChange: null,
       });
     } finally {
-      clearInterval(loadRef.current);
       setLoading(false);
     }
   };

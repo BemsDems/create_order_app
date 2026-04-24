@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import time
+import threading
+import uuid
 import pickle
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -234,6 +236,22 @@ def get_bundle() -> ModelBundle:
 
 _cache: Dict[str, tuple[float, Any]] = {}
 
+# --- Prediction jobs (status tracking) ---
+# In-memory job store: good enough for local/dev.
+PRED_JOBS: Dict[str, Dict[str, Any]] = {}
+PRED_JOBS_LOCK = threading.Lock()
+
+def _job_set(job_id: str, **fields: Any) -> None:
+    with PRED_JOBS_LOCK:
+        job = PRED_JOBS.get(job_id) or {"job_id": job_id, "status": "queued"}
+        job.update(fields)
+        PRED_JOBS[job_id] = job
+
+def _job_get(job_id: str) -> Dict[str, Any] | None:
+    with PRED_JOBS_LOCK:
+        j = PRED_JOBS.get(job_id)
+        return dict(j) if j else None
+
 
 def _cache_get(key: str, ttl_s: int) -> Any | None:
     now = time.time()
@@ -286,27 +304,28 @@ def api_quote(ticker: str) -> Dict[str, Any]:
     return out
 
 
-@app.get("/api/predict/{ticker}")
-def api_predict(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
+
+
+def _compute_prediction(ticker: str, *, horizon_days: int, job_id: str | None = None) -> Dict[str, Any]:
+    """Compute prediction with optional job status updates."""
     t = str(ticker).upper().strip()
-    if not t:
-        raise HTTPException(status_code=400, detail="ticker required")
+
+    def step(name: str) -> None:
+        if job_id:
+            _job_set(job_id, status="running", step=name)
 
     if int(horizon_days) != 5:
-        # current bundle is trained for horizon=5, keep it strict to avoid lying.
         raise HTTPException(status_code=400, detail="This model supports only horizon_days=5")
 
-    ck = f"pred:{t}"
-    cached = _cache_get(ck, ttl_s=300)
-    if cached is not None:
-        return cached
-
-    # Load data
+    step("fetch_moex_history")
     df_price = fetch_moex_history(t, start="2015-01-01", end=None)
     if df_price.empty:
         raise HTTPException(status_code=404, detail=f"No MOEX history for ticker={t}")
 
+    step("fetch_cbr_usdrub")
     usd = fetch_cbr_usdrub("2015-01-01", None)
+
+    step("feature_engineering")
     df_feat = add_stable_features(df_price, usd)
 
     missing = [c for c in FEATURE_COLS if c not in df_feat.columns]
@@ -318,16 +337,20 @@ def api_predict(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
 
     X = df_feat[FEATURE_COLS].values.astype(float)
 
+    step("load_model")
     bundle = get_bundle()
+
+    step("scaling")
     X_scaled = bundle.scaler.transform(X)
     window = X_scaled[-SEQ_LEN:, :]
     window = window.reshape(1, SEQ_LEN, len(FEATURE_COLS))
 
+    step("model_predict")
     prob = float(bundle.model.predict(window, verbose=0).reshape(-1)[0])
+
     verdict = "рост" if prob >= 0.55 else ("снижение" if prob <= 0.45 else "нейтрально")
 
     last = df_feat.iloc[-1]
-
     features_last = {c: float(last[c]) for c in FEATURE_COLS if c in df_feat.columns}
 
     out = {
@@ -347,5 +370,61 @@ def api_predict(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
         "note": "Модель обучалась на MOEX/CBR фичах (horizon=5). Для других горизонтов нужна переобучение/отдельные веса.",
     }
 
+    step("done")
+    return out
+
+
+@app.post("/api/predict_job/{ticker}")
+def api_predict_job_start(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
+    t = str(ticker).upper().strip()
+    if not t:
+        raise HTTPException(status_code=400, detail="ticker required")
+    if int(horizon_days) != 5:
+        raise HTTPException(status_code=400, detail="This model supports only horizon_days=5")
+
+    job_id = str(uuid.uuid4())
+    _job_set(job_id, status="queued", step="queued", ticker=t, horizon_days=int(horizon_days), created_at=time.time())
+
+    def runner() -> None:
+        try:
+            _job_set(job_id, status="running", step="starting")
+            out = _compute_prediction(t, horizon_days=int(horizon_days), job_id=job_id)
+            _job_set(job_id, status="done", step="done", result=out, finished_at=time.time())
+        except HTTPException as e:
+            _job_set(job_id, status="error", step="error", error={"status_code": e.status_code, "detail": e.detail}, finished_at=time.time())
+        except Exception as e:  # noqa: BLE001
+            _job_set(job_id, status="error", step="error", error={"type": type(e).__name__, "message": str(e)}, finished_at=time.time())
+
+    threading.Thread(target=runner, daemon=True).start()
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/predict_job/{job_id}")
+def api_predict_job_status(job_id: str) -> Dict[str, Any]:
+    j = _job_get(str(job_id))
+    if not j:
+        raise HTTPException(status_code=404, detail="job not found")
+    out = {k: j.get(k) for k in ("job_id", "status", "step", "ticker", "horizon_days", "created_at", "finished_at") if k in j}
+    if j.get("status") == "done":
+        out["result"] = j.get("result")
+    if j.get("status") == "error":
+        out["error"] = j.get("error")
+    return out
+
+@app.get("/api/predict/{ticker}")
+def api_predict(ticker: str, horizon_days: int = 5) -> Dict[str, Any]:
+    t = str(ticker).upper().strip()
+    if not t:
+        raise HTTPException(status_code=400, detail="ticker required")
+
+    if int(horizon_days) != 5:
+        raise HTTPException(status_code=400, detail="This model supports only horizon_days=5")
+
+    ck = f"pred:{t}"
+    cached = _cache_get(ck, ttl_s=300)
+    if cached is not None:
+        return cached
+
+    out = _compute_prediction(t, horizon_days=int(horizon_days))
     _cache_set(ck, out)
     return out
