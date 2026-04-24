@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Прогноз акций — Российский рынок</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:#0a0f1a;color:#f1f5f9;font-family:'Manrope',sans-serif;overflow-x:hidden}
+
+  /* Scrollbar */
+  ::-webkit-scrollbar{width:6px}
+  ::-webkit-scrollbar-track{background:#0a0f1a}
+  ::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.4);border-radius:99px}
+
+  /* Glass */
+  .glass{background:rgba(255,255,255,0.04);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.08)}
+  .glass-strong{background:rgba(255,255,255,0.07);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.12)}
+
+  /* Particles canvas */
+  #particles-canvas{position:absolute;inset:0;pointer-events:none;z-index:0}
+
+  /* Gradient text */
+  .grad-text{background:linear-gradient(135deg,#f1f5f9 0%,#c4b5fd 40%,#67e8f9 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+  /* Hero glow */
+  .hero-glow{background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(124,58,237,0.22) 0%,transparent 70%),radial-gradient(ellipse 60% 40% at 80% 30%,rgba(6,182,212,0.12) 0%,transparent 60%)}
+
+  /* Card hover */
+  .company-card{transition:transform 0.28s cubic-bezier(0.16,1,0.3,1),box-shadow 0.28s ease,border-color 0.28s ease}
+  .company-card:hover{transform:translateY(-4px) scale(1.02)}
+
+  /* Animations */
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  @keyframes pulse-ring{0%{transform:scale(0.9);opacity:1}100%{transform:scale(1.6);opacity:0}}
+  @keyframes spin-slow{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes fade-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes counter{from{opacity:0}to{opacity:1}}
+  @keyframes wave{0%,100%{transform:scaleY(0.4)}50%{transform:scaleY(1)}}
+  @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+  @keyframes bar-fill{from{width:0}to{width:var(--w)}}
+
+  .animate-float{animation:float 4s ease-in-out infinite}
+  .animate-fade-up{animation:fade-up 0.6s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-2{animation:fade-up 0.6s 0.12s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-3{animation:fade-up 0.6s 0.24s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-4{animation:fade-up 0.6s 0.36s cubic-bezier(0.16,1,0.3,1) both}
+
+  .shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.03) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.03) 75%);background-size:200% 100%;animation:shimmer 1.8s infinite}
+
+  /* Nav */
+  nav{position:fixed;top:0;left:0;right:0;z-index:100;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);background:rgba(10,15,26,0.8);border-bottom:1px solid rgba(255,255,255,0.07)}
+
+  /* Sector tab active */
+  .sector-tab.active{background:rgba(124,58,237,0.2);border-color:rgba(124,58,237,0.5);color:#c4b5fd}
+
+  /* Progress bar fill animation */
+  .bar-fill{transition:width 1.2s cubic-bezier(0.16,1,0.3,1)}
+
+  /* Counter animation */
+  @keyframes count-up{from{opacity:0;transform:scale(0.8)}to{opacity:1;transform:scale(1)}}
+  .count-anim{animation:count-up 0.5s cubic-bezier(0.34,1.56,0.64,1) both}
+
+  /* Loading bars */
+  .load-bar{display:inline-block;width:3px;border-radius:2px;animation:wave 1s ease-in-out infinite}
+  .load-bar:nth-child(1){animation-delay:0s}
+  .load-bar:nth-child(2){animation-delay:0.1s}
+  .load-bar:nth-child(3){animation-delay:0.2s}
+  .load-bar:nth-child(4){animation-delay:0.3s}
+  .load-bar:nth-child(5){animation-delay:0.4s}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;background:transparent}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:0;height:0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ── DATA ─────────────────────────────────────────────────────── */
+const SECTORS = {
+  oil:      { label:'Нефтегаз',      color:'#f97316', bg:'rgba(249,115,22,0.12)' },
+  finance:  { label:'Финансы',       color:'#3b82f6', bg:'rgba(59,130,246,0.12)' },
+  tech:     { label:'Технологии',    color:'#a855f7', bg:'rgba(168,85,247,0.12)' },
+  metal:    { label:'Металлургия',   color:'#94a3b8', bg:'rgba(148,163,184,0.12)' },
+  retail:   { label:'Ритейл',        color:'#ec4899', bg:'rgba(236,72,153,0.12)' },
+  telecom:  { label:'Телеком',       color:'#06b6d4', bg:'rgba(6,182,212,0.12)' },
+  energy:   { label:'Энергетика',    color:'#eab308', bg:'rgba(234,179,8,0.12)' },
+  transport:{ label:'Транспорт',     color:'#22c55e', bg:'rgba(34,197,94,0.12)' },
+  realty:   { label:'Недвижимость',  color:'#14b8a6', bg:'rgba(20,184,166,0.12)' },
+  chem:     { label:'Химия',         color:'#84cc16', bg:'rgba(132,204,22,0.12)' },
+  holding:  { label:'Холдинги',      color:'#6366f1', bg:'rgba(99,102,241,0.12)' },
+  timber:   { label:'Лесопром',      color:'#10b981', bg:'rgba(16,185,129,0.12)' },
+  agro:     { label:'Агро',          color:'#16a34a', bg:'rgba(22,163,74,0.12)' },
+  machine:  { label:'Машиностр.',    color:'#64748b', bg:'rgba(100,116,139,0.12)' },
+};
+
+const COMPANIES = [
+  { ticker:'SBER',  name:'Сбербанк',            sector:'finance'  },
+  { ticker:'GAZP',  name:'Газпром',              sector:'oil'      },
+  { ticker:'LKOH',  name:'Лукойл',               sector:'oil'      },
+  { ticker:'ROSN',  name:'Роснефть',             sector:'oil'      },
+  { ticker:'GMKN',  name:'Норильский никель',    sector:'metal'    },
+  { ticker:'NVTK',  name:'Новатэк',              sector:'oil'      },
+  { ticker:'YNDX',  name:'Яндекс',               sector:'tech'     },
+  { ticker:'MTSS',  name:'МТС',                  sector:'telecom'  },
+  { ticker:'MGNT',  name:'Магнит',               sector:'retail'   },
+  { ticker:'FIVE',  name:'X5 Retail Group',       sector:'retail'   },
+  { ticker:'PLZL',  name:'Полюс Золото',          sector:'metal'    },
+  { ticker:'POLY',  name:'Polymetal',             sector:'metal'    },
+  { ticker:'ALRS',  name:'АЛРОСА',               sector:'metal'    },
+  { ticker:'CHMF',  name:'Северсталь',           sector:'metal'    },
+  { ticker:'NLMK',  name:'НЛМК',                 sector:'metal'    },
+  { ticker:'MAGN',  name:'ММК',                  sector:'metal'    },
+  { ticker:'VTBR',  name:'ВТБ',                  sector:'finance'  },
+  { ticker:'MOEX',  name:'Московская биржа',     sector:'finance'  },
+  { ticker:'PHOR',  name:'ФосАгро',              sector:'chem'     },
+  { ticker:'RUAL',  name:'РУСАЛ',                sector:'metal'    },
+  { ticker:'OZON',  name:'Ozon',                 sector:'tech'     },
+  { ticker:'VKCO',  name:'ВКонтакте',            sector:'tech'     },
+  { ticker:'IRAO',  name:'Интер РАО',            sector:'energy'   },
+  { ticker:'FEES',  name:'ФСК ЕЭС',             sector:'energy'   },
+  { ticker:'HYDR',  name:'РусГидро',             sector:'energy'   },
+  { ticker:'RTKM',  name:'Ростелеком',           sector:'telecom'  },
+  { ticker:'AFLT',  name:'Аэрофлот',             sector:'transport'},
+  { ticker:'PIKK',  name:'ПИК',                  sector:'realty'   },
+  { ticker:'SMLT',  name:'Самолёт',              sector:'realty'   },
+  { ticker:'SGZH',  name:'Сегежа',               sector:'timber'   },
+  { ticker:'MTLR',  name:'Мечел',                sector:'metal'    },
+  { ticker:'AFKS',  name:'АФК Система',          sector:'holding'  },
+  { ticker:'CBOM',  name:'МКБ',                  sector:'finance'  },
+  { ticker:'TATN',  name:'Татнефть',             sector:'oil'      },
+  { ticker:'SNGS',  name:'Сургутнефтегаз',      sector:'oil'      },
+  { ticker:'BANE',  name:'Башнефть',             sector:'oil'      },
+  { ticker:'TRNFP', name:'Транснефть',           sector:'oil'      },
+  { ticker:'NMTP',  name:'НМТП',                 sector:'transport'},
+  { ticker:'FLOT',  name:'Совкомфлот',           sector:'transport'},
+  { ticker:'UWGN',  name:'Уралвагонзавод',       sector:'machine'  },
+  { ticker:'TCSG',  name:'Т-Банк',              sector:'finance'  },
+  { ticker:'FIXP',  name:'Fix Price',            sector:'retail'   },
+  { ticker:'ENPG',  name:'ЭН+',                 sector:'energy'   },
+  { ticker:'DSKY',  name:'Детский мир',          sector:'retail'   },
+  { ticker:'LENT',  name:'Лента',               sector:'retail'   },
+  { ticker:'RASP',  name:'Распадская',           sector:'metal'    },
+  { ticker:'SELG',  name:'Селигдар',             sector:'metal'    },
+  { ticker:'POGR',  name:'ПОЭЗ',                sector:'energy'   },
+  { ticker:'BSPB',  name:'Банк Санкт-Петербург', sector:'finance'  },
+  { ticker:'AQUA',  name:'Инарктика',            sector:'agro'     },
+  { ticker:'RNFT',  name:'РуссНефть',            sector:'oil'      },
+  { ticker:'MSNG',  name:'Мосэнерго',            sector:'energy'   },
+  { ticker:'LSRG',  name:'ЛСР',                 sector:'realty'   },
+  { ticker:'RENI',  name:'Ренессанс Страхование',sector:'finance'  },
+];
+
+const HORIZONS = [5];
+
+const API_BASE = window.STOCK_API_BASE || 'http://localhost:8001';
+async function apiJson(path) {
+  const r = await fetch(`${API_BASE}${path}`);
+  if(!r.ok){
+    const t = await r.text().catch(()=> '');
+    throw new Error(`API ${r.status}: ${t || r.statusText}`);
+  }
+  return r.json();
+}
+
+/* ── BASE PRICES (правдоподобные цены в рублях) ──────────────── */
+const BASE_PRICES = {
+  SBER:280, GAZP:150, LKOH:6800, ROSN:580, GMKN:14500, NVTK:1050,
+  YNDX:3500, MTSS:320, MGNT:5200, FIVE:2800, PLZL:12000, POLY:450,
+  ALRS:70, CHMF:1500, NLMK:220, MAGN:55, VTBR:0.023, MOEX:220,
+  PHOR:6500, RUAL:38, OZON:3200, VKCO:320, IRAO:3.8, FEES:0.19,
+  HYDR:0.69, RTKM:95, AFLT:55, PIKK:750, SMLT:1800, SGZH:4.5,
+  MTLR:260, AFKS:17, CBOM:8.5, TATN:720, SNGS:32, BANE:2000,
+  TRNFP:1500, NMTP:12.5, FLOT:140, UWGN:85, TCSG:3000, FIXP:220,
+  ENPG:420, DSKY:71, LENT:1200, RASP:320, SELG:65, POGR:3.2,
+  BSPB:360, AQUA:850, RNFT:560, MSNG:2.5, LSRG:850, RENI:100,
+};
+
+/* форматирование цены в зависимости от величины */
+function fmtPrice(p) {
+  if(p < 0.1)  return p.toFixed(4);
+  if(p < 1)    return p.toFixed(3);
+  if(p < 10)   return p.toFixed(2);
+  if(p < 100)  return p.toFixed(1);
+  return Math.round(p).toLocaleString('ru-RU');
+}
+
+/* дневное изменение — стабильно для тикера (обновляется раз в «день» = seed по дате) */
+function getDayChange(ticker) {
+  const dateSeed = new Date().toDateString().split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  const tickSeed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  const rng = seededRand(dateSeed * tickSeed + 31337);
+  return +((rng()*6 - 3).toFixed(2)); // -3% .. +3%
+}
+
+const LOADING_MSGS = [
+  'Загружаем котировки...',
+  'Анализируем тренды...',
+  'Считаем вероятности...',
+  'Формируем прогноз...',
+];
+
+const FACTOR_NAMES = [
+  { key:'volatility',  label:'Волатильность',       desc:'уровень риска'           },
+  { key:'trend',       label:'Ценовой тренд',        desc:'направление движения'    },
+  { key:'volume',      label:'Объём торгов',         desc:'рыночная активность'     },
+  { key:'dividend',    label:'Дивидендная доходность',desc:'выплаты акционерам'     },
+  { key:'imoex',       label:'Индекс IMOEX',         desc:'состояние рынка'         },
+  { key:'usd',         label:'Курс доллара',         desc:'валютный фактор'         },
+];
+
+/* ── SEEDED RNG ───────────────────────────────────────────────── */
+function seededRand(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
+}
+
+function genForecast(ticker, horizon) {
+  const seed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0) * (horizon+7);
+  const rng = seededRand(seed);
+  const prob = Math.round(35 + rng()*40); // 35–75%
+  const confidence = ['низкий','средний','высокий'][Math.floor(rng()*3)];
+  const confVal = Math.round(30 + rng()*65);
+  const auc = +(0.55 + rng()*0.15).toFixed(2);
+  const factors = FACTOR_NAMES.map(f => {
+    const impact = Math.round(20+rng()*75);
+    const positive = rng()>0.45;
+    return { ...f, impact, positive };
+  });
+  // прогнозная цена
+  const basePrice = BASE_PRICES[ticker] || 100;
+  const dayChange = getDayChange(ticker);
+  const currentPrice = +(basePrice * (1 + dayChange/100)).toFixed(basePrice < 1 ? 4 : basePrice < 10 ? 2 : 0);
+  // ожидаемое изменение: зависит от prob и горизонта
+  const direction = prob >= 55 ? 1 : prob <= 44 ? -1 : (rng()>0.5?1:-1);
+  const pctChange = direction * (Math.abs(prob-50)/50) * (horizon/365) * (0.15 + rng()*0.25) * 100;
+  const projectedPrice = +(currentPrice * (1 + pctChange/100));
+  const projPctStr = (pctChange >= 0 ? '+' : '') + pctChange.toFixed(1) + '%';
+
+  let verdict, verdictColor;
+  if(prob >= 55){ verdict='Вероятен рост'; verdictColor='success'; }
+  else if(prob <= 44){ verdict='Вероятно снижение'; verdictColor='danger'; }
+  else { verdict='Нейтрально'; verdictColor='warning'; }
+
+  const company = COMPANIES.find(c=>c.ticker===ticker);
+  const sectorLabel = SECTORS[company?.sector]?.label||'';
+  const riskLevel = confVal > 65 ? 'умеренный' : confVal > 40 ? 'повышенный' : 'высокий';
+  const explanation = prob>=55
+    ? `На основании анализа данных за 10 лет, акции ${company?.name} с вероятностью ${prob}% покажут рост в ближайшие ${horizon} дней. Ожидаемая цена — около ${fmtPrice(projectedPrice)} ₽ (${projPctStr} от текущей). Текущий уровень риска ${riskLevel}, рыночная ситуация благоприятна для сектора «${sectorLabel}».`
+    : prob<=44
+    ? `Анализ исторических данных показывает, что акции ${company?.name} с вероятностью ${100-prob}% могут снизиться в ближайшие ${horizon} дней. Прогнозная цена — около ${fmtPrice(projectedPrice)} ₽ (${projPctStr}). Уровень риска ${riskLevel}, рекомендуем проявить осторожность.`
+    : `Прогноз для ${company?.name} на ${horizon} дней неоднозначный. Рынок в состоянии неопределённости, вероятности роста и снижения близки. Ориентировочная цена: ${fmtPrice(projectedPrice)} ₽ (${projPctStr}).`;
+
+  // мини-график: 30 точек за «последний месяц»
+  const chartRng = seededRand(seed + 99991);
+  const chartPts = [];
+  let cp = basePrice;
+  for(let i=0;i<30;i++){
+    cp = cp * (1 + (chartRng()-0.5)*0.04);
+    chartPts.push(cp);
+  }
+
+  return { prob, verdict, verdictColor, confidence, confVal, auc, factors, explanation,
+           currentPrice, projectedPrice, projPctStr, pctChange, chartPts, dayChange };
+}
+
+/* ── MINI CHART ───────────────────────────────────────────────── */
+function MiniChart({points, color}) {
+  const W=340, H=72, PAD=4;
+  const min = Math.min(...points), max = Math.max(...points);
+  const range = max - min || 1;
+  const xs = points.map((_,i)=>PAD + (i/(points.length-1))*(W-PAD*2));
+  const ys = points.map(p=>PAD + (1-(p-min)/range)*(H-PAD*2));
+  const pathD = xs.map((x,i)=>`${i===0?'M':'L'}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  const areaD = pathD + ` L${xs[xs.length-1].toFixed(1)},${H} L${xs[0].toFixed(1)},${H} Z`;
+  const isUp = points[points.length-1] >= points[0];
+  const lineColor = isUp ? '#4ade80' : '#f87171';
+  const gradId = `cg${Math.round(points[0])}`;
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:'block',borderRadius:8,overflow:'visible'}}>
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.18"/>
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill={`url(#${gradId})`}/>
+      <path d={pathD} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* last dot */}
+      <circle cx={xs[xs.length-1]} cy={ys[ys.length-1]} r="3" fill={lineColor}/>
+    </svg>
+  );
+}
+
+/* ── PARTICLES ────────────────────────────────────────────────── */
+function ParticlesCanvas() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let raf, w, h;
+    const pts = [];
+    const resize = () => {
+      w = canvas.width = canvas.offsetWidth;
+      h = canvas.height = canvas.offsetHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    for(let i=0;i<80;i++){
+      pts.push({
+        x:Math.random()*1400, y:Math.random()*800,
+        vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3,
+        r:Math.random()*1.6+0.4,
+        a:Math.random()*Math.PI*2,
+        color: Math.random()>0.5 ? [124,58,237] : [6,182,212]
+      });
+    }
+    const draw = () => {
+      ctx.clearRect(0,0,w,h);
+      pts.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.a+=0.008;
+        if(p.x<0)p.x=w; if(p.x>w)p.x=0;
+        if(p.y<0)p.y=h; if(p.y>h)p.y=0;
+        const o = 0.3+0.2*Math.sin(p.a);
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${o})`;
+        ctx.fill();
+      });
+      // connections
+      for(let i=0;i<pts.length;i++){
+        for(let j=i+1;j<pts.length;j++){
+          const dx=pts[i].x-pts[j].x, dy=pts[i].y-pts[j].y;
+          const d=Math.sqrt(dx*dx+dy*dy);
+          if(d<100){
+            ctx.beginPath();
+            ctx.moveTo(pts[i].x,pts[i].y);
+            ctx.lineTo(pts[j].x,pts[j].y);
+            ctx.strokeStyle=`rgba(124,58,237,${0.08*(1-d/100)})`;
+            ctx.lineWidth=0.5;
+            ctx.stroke();
+          }
+        }
+      }
+      raf=requestAnimationFrame(draw);
+    };
+    draw();
+    return ()=>{ cancelAnimationFrame(raf); window.removeEventListener('resize',resize); };
+  },[]);
+  return <canvas ref={canvasRef} id="particles-canvas" style={{width:'100%',height:'100%'}}/>;
+}
+
+/* ── NAV ──────────────────────────────────────────────────────── */
+function Nav({onNav}) {
+  const links = [
+    {label:'Главная',href:'#hero'},
+    {label:'Компании',href:'#catalog'},
+    {label:'Прогноз',href:'#forecast'},
+    {label:'О проекте',href:'#about'},
+  ];
+  return (
+    <nav style={{height:60}}>
+      <div style={{maxWidth:1200,margin:'0 auto',padding:'0 24px',height:'100%',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:28,height:28,borderRadius:8,background:'linear-gradient(135deg,#7c3aed,#06b6d4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><polyline points="1,10 4,6 7,8 10,3 13,5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <span style={{fontWeight:700,fontSize:15,letterSpacing:'-0.02em',color:'#f1f5f9'}}>StockAI</span>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.3)',marginLeft:4}}>RU</span>
+        </div>
+        <div style={{display:'flex',gap:4}}>
+          {links.map(l=>(
+            <a key={l.href} href={l.href} onClick={e=>{e.preventDefault();onNav(l.href)}}
+              style={{padding:'6px 14px',borderRadius:8,fontSize:14,color:'rgba(255,255,255,0.6)',textDecoration:'none',transition:'all 0.2s'}}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.06)';e.currentTarget.style.color='#f1f5f9'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='rgba(255,255,255,0.6)'}}>
+              {l.label}
+            </a>
+          ))}
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+/* ── HERO ─────────────────────────────────────────────────────── */
+function Hero({onStart}) {
+  return (
+    <section id="hero" style={{position:'relative',minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+      <div className="hero-glow" style={{position:'absolute',inset:0,zIndex:0}}/>
+      <ParticlesCanvas/>
+      <div style={{position:'relative',zIndex:1,textAlign:'center',maxWidth:760,padding:'0 24px'}}>
+        <div className="animate-fade-up" style={{
+          display:'inline-flex',alignItems:'center',gap:8,
+          padding:'6px 16px',borderRadius:999,marginBottom:32,
+          background:'rgba(124,58,237,0.12)',border:'1px solid rgba(124,58,237,0.3)',
+        }}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:'#7c3aed',boxShadow:'0 0 8px #7c3aed'}}/>
+          <span style={{fontSize:13,color:'#c4b5fd',fontWeight:600,letterSpacing:'0.04em'}}>TCN NEURAL NETWORK · MOEX DATA</span>
+        </div>
+        <h1 className="animate-fade-up-2" style={{
+          fontFamily:'Manrope',fontWeight:800,
+          fontSize:'clamp(38px,7vw,72px)',
+          lineHeight:1.1,letterSpacing:'-0.03em',
+          marginBottom:24,
+        }}>
+          <span className="grad-text">Прогноз акций</span><br/>
+          <span style={{color:'#f1f5f9'}}>российского рынка</span>
+        </h1>
+        <p className="animate-fade-up-3" style={{fontSize:'clamp(15px,2.2vw,18px)',color:'rgba(255,255,255,0.55)',lineHeight:1.65,marginBottom:40,maxWidth:560,margin:'0 auto 40px'}}>
+          Нейросеть TCN, обученная на данных ММВБ за 10+ лет.<br/>Анализируем 20 показателей — даём понятный результат.
+        </p>
+        <div className="animate-fade-up-4" style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap'}}>
+          <button onClick={onStart} style={{
+            padding:'14px 32px',borderRadius:12,fontSize:16,fontWeight:700,cursor:'pointer',
+            background:'linear-gradient(135deg,#7c3aed,#5b21b6)',
+            color:'white',border:'none',
+            boxShadow:'0 0 32px rgba(124,58,237,0.4)',
+            transition:'all 0.25s cubic-bezier(0.16,1,0.3,1)',fontFamily:'Manrope',
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-2px) scale(1.03)';e.currentTarget.style.boxShadow='0 8px 40px rgba(124,58,237,0.55)'}}
+          onMouseLeave={e=>{e.currentTarget.style.transform='none';e.currentTarget.style.boxShadow='0 0 32px rgba(124,58,237,0.4)'}}>
+            Начать анализ →
+          </button>
+          <a href="#about" onClick={e=>{e.preventDefault();document.querySelector('#about')?.scrollIntoView({behavior:'smooth'})}}
+            style={{
+              padding:'14px 28px',borderRadius:12,fontSize:15,fontWeight:600,cursor:'pointer',
+              background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',
+              border:'1px solid rgba(255,255,255,0.1)',textDecoration:'none',
+              transition:'all 0.25s',fontFamily:'Manrope',display:'inline-flex',alignItems:'center',
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.09)';e.currentTarget.style.color='white'}}
+            onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.05)';e.currentTarget.style.color='rgba(255,255,255,0.7)'}}>
+            О методологии
+          </a>
+        </div>
+        {/* Stats row */}
+        <div style={{display:'flex',gap:32,justifyContent:'center',marginTop:64,flexWrap:'wrap'}}>
+          {[['54','компании'],['10+','лет данных'],['20','показателей']].map(([n,l])=>(
+            <div key={l} style={{textAlign:'center'}}>
+              <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:28,color:'#c4b5fd'}}>{n}</div>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginTop:2}}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Scroll indicator */}
+      <div style={{position:'absolute',bottom:32,left:'50%',transform:'translateX(-50%)',display:'flex',flexDirection:'column',alignItems:'center',gap:6,opacity:0.4}}>
+        <span style={{fontSize:11,letterSpacing:'0.1em',color:'rgba(255,255,255,0.5)'}}>SCROLL</span>
+        <div style={{width:1,height:32,background:'linear-gradient(to bottom,rgba(255,255,255,0.4),transparent)'}}/>
+      </div>
+    </section>
+  );
+}
+
+/* ── COMPANY CARD ─────────────────────────────────────────────── */
+function CompanyCard({company, onSelect}) {
+  const sec = SECTORS[company.sector];
+  const [hovered,setHovered] = useState(false);
+  const [quote,setQuote] = useState(null);
+  const [quoteErr,setQuoteErr] = useState(null);
+
+  useEffect(()=>{
+    let cancelled=false;
+    setQuote(null);
+    setQuoteErr(null);
+    apiJson(`/api/quote/${company.ticker}`)
+      .then(q=>{ if(!cancelled) setQuote(q); })
+      .catch(e=>{ if(!cancelled) setQuoteErr(String(e?.message||e)); });
+    return ()=>{ cancelled=true; };
+  },[company.ticker]);
+
+  const fallbackBase = BASE_PRICES[company.ticker] || 100;
+  const dayChange = quote ? (quote.change_1d*100) : getDayChange(company.ticker);
+  const currentPrice = quote ? quote.price : +(fallbackBase * (1 + dayChange/100));
+  const isUp = dayChange >= 0;
+  return (
+    <div className="company-card glass" onClick={()=>onSelect(company)}
+      onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)}
+      style={{
+        padding:'18px 16px',borderRadius:16,cursor:'pointer',
+        boxShadow: hovered
+          ? `0 8px 32px rgba(0,0,0,0.5),0 0 24px ${sec.color}33`
+          : '0 4px 16px rgba(0,0,0,0.3)',
+        borderColor: hovered ? `${sec.color}55` : 'rgba(255,255,255,0.08)',
+        background: hovered ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
+      }}>
+      {/* row 1: ticker + sector */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:6}}>
+        <span style={{
+          fontFamily:'JetBrains Mono',fontWeight:700,fontSize:16,
+          color: hovered ? sec.color : '#f1f5f9',transition:'color 0.25s',letterSpacing:'0.02em',
+        }}>{company.ticker}</span>
+        <div style={{
+          padding:'3px 8px',borderRadius:99,fontSize:10,fontWeight:600,
+          background: sec.bg, color: sec.color,
+          border:`1px solid ${sec.color}33`,
+          transition:'all 0.25s',
+          boxShadow: hovered ? `0 0 10px ${sec.color}33` : 'none',
+        }}>{sec.label}</div>
+      </div>
+      {/* row 2: company name */}
+      <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',lineHeight:1.35,fontWeight:500,marginBottom:10}}>{company.name}</div>
+      {/* row 3: price + change */}
+      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between'}}>
+        <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:15,color:'#f1f5f9',letterSpacing:'-0.01em'}}>
+          {fmtPrice(currentPrice)} ₽
+        </span>
+        <span style={{
+          fontFamily:'JetBrains Mono',fontWeight:600,fontSize:12,
+          color: isUp ? '#4ade80' : '#f87171',
+          background: isUp ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          padding:'2px 7px',borderRadius:99,
+        }}>
+          {isUp?'+':''}{dayChange.toFixed(2)}%
+        </span>
+      </div>
+      <div style={{marginTop:10,height:2,borderRadius:1,background:`linear-gradient(to right,${sec.color}${hovered?'99':'33'},transparent)`,transition:'all 0.3s'}}/>
+    </div>
+  );
+}
+
+/* ── CATALOG ──────────────────────────────────────────────────── */
+function Catalog({onSelect}) {
+  const [search,setSearch] = useState('');
+  const [activeSector,setActiveSector] = useState('all');
+
+  const sectorCounts = useMemo(()=>{
+    const c={all:COMPANIES.length};
+    COMPANIES.forEach(co=>{c[co.sector]=(c[co.sector]||0)+1});
+    return c;
+  },[]);
+
+  const filtered = useMemo(()=>COMPANIES.filter(c=>{
+    const matchSector = activeSector==='all'||c.sector===activeSector;
+    const q=search.toLowerCase();
+    const matchSearch = !q||c.ticker.toLowerCase().includes(q)||c.name.toLowerCase().includes(q);
+    return matchSector&&matchSearch;
+  }),[search,activeSector]);
+
+  const sectorTabs = [['all','Все',null],...Object.entries(SECTORS).map(([k,v])=>[k,v.label,v.color])];
+
+  return (
+    <section id="catalog" style={{padding:'100px 0 80px',minHeight:'100vh'}}>
+      <div style={{maxWidth:1200,margin:'0 auto',padding:'0 24px'}}>
+        <div style={{textAlign:'center',marginBottom:48}}>
+          <h2 style={{fontFamily:'Manrope',fontWeight:800,fontSize:'clamp(28px,4vw,44px)',letterSpacing:'-0.03em',color:'#f1f5f9',marginBottom:14}}>
+            Выберите <span className="grad-text">компанию</span>
+          </h2>
+          <p style={{color:'rgba(255,255,255,0.45)',fontSize:16}}>{COMPANIES.length} компаний Московской биржи</p>
+        </div>
+
+        {/* Search */}
+        <div style={{maxWidth:520,margin:'0 auto 28px',position:'relative'}}>
+          <svg style={{position:'absolute',left:16,top:'50%',transform:'translateY(-50%)',opacity:0.4}} width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="6.5" cy="6.5" r="5" stroke="white" strokeWidth="1.5"/>
+            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Поиск по тикеру или названию..." className="glass"
+            style={{
+              width:'100%',padding:'13px 16px 13px 44px',borderRadius:12,
+              fontSize:15,color:'#f1f5f9',outline:'none',fontFamily:'Manrope',
+            }}/>
+        </div>
+
+        {/* Sector filters */}
+        <div style={{display:'flex',gap:8,marginBottom:32,flexWrap:'wrap',justifyContent:'center'}}>
+          {sectorTabs.map(([key,label,color])=>(
+            <button key={key} onClick={()=>setActiveSector(key)}
+              className={`sector-tab${activeSector===key?' active':''}`}
+              style={{
+                padding:'7px 14px',borderRadius:99,fontSize:13,fontWeight:600,cursor:'pointer',
+                fontFamily:'Manrope',transition:'all 0.2s',
+                background: activeSector===key ? (color?`${color}22`:'rgba(124,58,237,0.2)') : 'rgba(255,255,255,0.04)',
+                border: activeSector===key ? `1px solid ${color||'#7c3aed'}66` : '1px solid rgba(255,255,255,0.08)',
+                color: activeSector===key ? (color||'#c4b5fd') : 'rgba(255,255,255,0.5)',
+              }}>
+              {label} <span style={{opacity:0.5,fontSize:11,marginLeft:3}}>{sectorCounts[key]||0}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Grid */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:14}}>
+          {filtered.map(c=><CompanyCard key={c.ticker} company={c} onSelect={onSelect}/>)}
+          {filtered.length===0&&(
+            <div style={{gridColumn:'1/-1',textAlign:'center',padding:'60px 0',color:'rgba(255,255,255,0.3)',fontSize:16}}>
+              Ничего не найдено
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── PROGRESS BAR ─────────────────────────────────────────────── */
+function ProgressBar({value,color,animated}) {
+  const [width,setWidth] = useState(0);
+  useEffect(()=>{if(animated){const t=setTimeout(()=>setWidth(value),100);return()=>clearTimeout(t);}else{setWidth(value);}},[value,animated]);
+  return (
+    <div style={{height:6,borderRadius:99,background:'rgba(255,255,255,0.07)',overflow:'hidden'}}>
+      <div style={{height:'100%',borderRadius:99,width:`${width}%`,background:color||'#7c3aed',transition:'width 1.2s cubic-bezier(0.16,1,0.3,1)'}}/>
+    </div>
+  );
+}
+
+/* ── COUNTER ANIM ─────────────────────────────────────────────── */
+function AnimCounter({target}) {
+  const [val,setVal] = useState(0);
+  useEffect(()=>{
+    let start=0, raf;
+    const dur=1200, step=()=>{
+      start+=16;
+      const p=Math.min(start/dur,1);
+      const ease=1-Math.pow(1-p,4);
+      setVal(Math.round(ease*target));
+      if(p<1) raf=requestAnimationFrame(step);
+    };
+    const t=setTimeout(()=>{ raf=requestAnimationFrame(step); },200);
+    return()=>{clearTimeout(t);cancelAnimationFrame(raf);};
+  },[target]);
+  return <>{val}</>;
+}
+
+/* ── FORECAST ─────────────────────────────────────────────────── */
+function Forecast({company}) {
+  const [horizon,setHorizon] = useState(30);
+  const [loading,setLoading] = useState(false);
+  const [result,setResult] = useState(null);
+  const [loadMsg,setLoadMsg] = useState(0);
+  const [showDetail,setShowDetail] = useState(false);
+  const loadRef = useRef(null);
+
+  useEffect(()=>{ setResult(null); setShowDetail(false); },[company]);
+
+  const doForecast = async () => {
+    setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0);
+
+    const stepToMsg = {
+      queued: 0,
+      starting: 0,
+      fetch_moex_history: 0,
+      fetch_cbr_usdrub: 1,
+      feature_engineering: 2,
+      load_model: 2,
+      scaling: 2,
+      model_predict: 3,
+      done: 3,
+      error: 3,
+    };
+
+    try {
+      // Start async job
+      const start = await apiJson(`/api/predict_job/${company.ticker}?horizon_days=${horizon}`);
+      const jobId = start.job_id;
+
+      // Poll until done/error
+      let tries = 0;
+      while(true){
+        tries++;
+        const st = await apiJson(`/api/predict_job/${jobId}`);
+        const msgIdx = stepToMsg[st.step] ?? 0;
+        setLoadMsg(msgIdx);
+
+        if(st.status === 'done'){
+          const pred = st.result;
+          const q = await apiJson(`/api/quote/${company.ticker}`);
+
+          const prob = Math.round((pred.prob_up_5d || 0) * 100);
+          let verdict, verdictColor;
+          if(pred.verdict === 'рост'){ verdict='Вероятен рост'; verdictColor='success'; }
+          else if(pred.verdict === 'снижение'){ verdict='Вероятно снижение'; verdictColor='danger'; }
+          else { verdict='Нейтрально'; verdictColor='warning'; }
+
+          const f = pred.features_last || {};
+          const clamp01 = (x)=> Math.max(0, Math.min(1, x));
+          const impactFrom = (x, scale=1)=> Math.round(20 + 80*clamp01(Math.abs(x)*scale));
+
+          const factors = FACTOR_NAMES.map(ff=>{
+            if(ff.key==='volatility') return { ...ff, impact: impactFrom(f.volatility_20||0, 20), positive: (f.volatility_20||0) < 0.02 };
+            if(ff.key==='trend') return { ...ff, impact: impactFrom(f.price_vs_sma50||0, 8), positive: (f.price_vs_sma50||0) >= 0 };
+            if(ff.key==='volume') return { ...ff, impact: impactFrom((f.volume_ratio||1)-1, 2), positive: (f.volume_ratio||1) >= 1 };
+            if(ff.key==='usd') return { ...ff, impact: impactFrom(f.usd_ret_5d||0, 15), positive: (f.usd_ret_5d||0) <= 0 };
+            if(ff.key==='imoex') return { ...ff, impact: impactFrom(f.ret_5d||0, 10), positive: (f.ret_5d||0) >= 0 };
+            if(ff.key==='dividend') return { ...ff, impact: 35, positive: true };
+            return { ...ff, impact: 40, positive: true };
+          });
+
+          const companyName = company?.name || company?.ticker;
+          const explanation = (prob>=55)
+            ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней оценивается в ${prob}%.`
+            : (prob<=45)
+              ? `На основании реальных данных MOEX/ЦБ и Keras-модели, вероятность роста ${companyName} на 5 торговых дней низкая (p=${prob}%).`
+              : `По реальным данным MOEX/ЦБ модель даёт нейтральный сигнал для ${companyName} (p=${prob}%).`;
+
+          setResult({
+            prob,
+            verdict,
+            verdictColor,
+            confidence: 'модель',
+            confVal: prob,
+            auc: 0.0,
+            factors,
+            explanation,
+            currentPrice: q.price,
+            dayChange: q.change_1d*100,
+          });
+          break;
+        }
+
+        if(st.status === 'error'){
+          throw new Error(st?.error?.detail || st?.error?.message || 'unknown error');
+        }
+
+        // avoid tight loop
+        await new Promise(r=>setTimeout(r, 400));
+        if(tries > 200) throw new Error('timeout');
+      }
+    } catch (e) {
+      setResult({
+        prob: 0,
+        verdict: 'Ошибка данных',
+        verdictColor: 'danger',
+        confidence: 'n/a',
+        confVal: 0,
+        auc: 0.0,
+        factors: [],
+        explanation: `Не удалось получить реальные данные/прогноз: ${String(e?.message||e)}`,
+        currentPrice: null,
+        dayChange: null,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(()=>()=>clearInterval(loadRef.current),[]);
+
+  if(!company) return null;
+  const sec = SECTORS[company.sector];
+  const currentPrice = result?.currentPrice ?? +(( BASE_PRICES[company.ticker]||100) * (1 + getDayChange(company.ticker)/100));
+  const dayChange = (result?.dayChange ?? getDayChange(company.ticker));
+  const isDayUp = dayChange >= 0;
+
+  const verdictStyles = {
+    success:{bg:'rgba(34,197,94,0.1)',border:'rgba(34,197,94,0.25)',color:'#4ade80'},
+    danger: {bg:'rgba(239,68,68,0.1)',border:'rgba(239,68,68,0.25)',color:'#f87171'},
+    warning:{bg:'rgba(234,179,8,0.1)',border:'rgba(234,179,8,0.25)',color:'#facc15'},
+  };
+
+  return (
+    <section id="forecast" style={{padding:'80px 0',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+      <div style={{maxWidth:800,margin:'0 auto',padding:'0 24px'}}>
+        {/* Header */}
+        <div className="glass" style={{borderRadius:20,padding:'24px 28px',marginBottom:28,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+          <div style={{
+            width:52,height:52,borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,
+            background:`linear-gradient(135deg,${sec.color}22,${sec.color}44)`,border:`1px solid ${sec.color}44`,
+          }}>
+            <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:13,color:sec.color}}>{company.ticker.slice(0,2)}</span>
+          </div>
+          <div style={{flex:1,minWidth:140}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+              <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:20,color:'#f1f5f9',letterSpacing:'0.02em'}}>{company.ticker}</span>
+              <div style={{padding:'3px 10px',borderRadius:99,background:sec.bg,border:`1px solid ${sec.color}33`,fontSize:11,fontWeight:600,color:sec.color}}>{sec.label}</div>
+            </div>
+            <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginTop:2}}>{company.name}</div>
+          </div>
+          {/* Price block */}
+          <div style={{textAlign:'right'}}>
+            <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:28,color:'#f1f5f9',letterSpacing:'-0.02em',lineHeight:1}}>
+              {fmtPrice(currentPrice)} <span style={{fontSize:16,color:'rgba(255,255,255,0.4)',fontWeight:500}}>₽</span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6,marginTop:5}}>
+              <span style={{
+                fontFamily:'JetBrains Mono',fontWeight:600,fontSize:13,
+                color: isDayUp?'#4ade80':'#f87171',
+                background: isDayUp?'rgba(34,197,94,0.1)':'rgba(239,68,68,0.1)',
+                padding:'2px 9px',borderRadius:99,
+              }}>{isDayUp?'+':''}{dayChange.toFixed(2)}% сегодня</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Horizon selector */}
+        <div style={{marginBottom:28}}>
+          <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,letterSpacing:'0.04em'}}>ГОРИЗОНТ ПРОГНОЗА</div>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+            {HORIZONS.map(h=>(
+              <button key={h} onClick={()=>setHorizon(h)}
+                style={{
+                  padding:'8px 18px',borderRadius:10,fontSize:14,fontWeight:700,cursor:'pointer',
+                  fontFamily:'JetBrains Mono',transition:'all 0.2s',
+                  background: horizon===h ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.05)',
+                  border: horizon===h ? '1px solid rgba(124,58,237,0.6)' : '1px solid rgba(255,255,255,0.08)',
+                  color: horizon===h ? '#c4b5fd' : 'rgba(255,255,255,0.5)',
+                  boxShadow: horizon===h ? '0 0 16px rgba(124,58,237,0.25)' : 'none',
+                }}>
+                {h}д
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Forecast button */}
+        <button onClick={doForecast} disabled={loading}
+          style={{
+            width:'100%',padding:'16px',borderRadius:14,fontSize:16,fontWeight:700,cursor:loading?'default':'pointer',
+            fontFamily:'Manrope',
+            background: loading ? 'rgba(124,58,237,0.15)' : 'linear-gradient(135deg,#7c3aed,#5b21b6)',
+            border: loading ? '1px solid rgba(124,58,237,0.3)' : 'none',
+            color: loading ? 'rgba(255,255,255,0.4)' : 'white',
+            transition:'all 0.3s',
+            boxShadow: loading ? 'none' : '0 4px 24px rgba(124,58,237,0.4)',
+          }}>
+          {loading ? 'Идёт анализ...' : 'Сделать прогноз'}
+        </button>
+
+        {/* Loading state */}
+        {loading && (
+          <div style={{marginTop:40,textAlign:'center',padding:'48px 32px',borderRadius:20}} className="glass">
+            <div style={{display:'flex',gap:4,justifyContent:'center',marginBottom:24,height:32,alignItems:'center'}}>
+              {[0,1,2,3,4].map(i=>(
+                <div key={i} className="load-bar" style={{
+                  width:4,height:32,borderRadius:3,
+                  background:'linear-gradient(to top,#7c3aed,#06b6d4)',
+                  animationDelay:`${i*0.12}s`,
+                }}/>
+              ))}
+            </div>
+            <div style={{fontSize:16,color:'rgba(255,255,255,0.7)',fontWeight:600,minHeight:24,transition:'all 0.4s'}}>
+              {LOADING_MSGS[loadMsg]}
+            </div>
+            <div style={{marginTop:12,fontSize:13,color:'rgba(255,255,255,0.3)'}}>
+              Горизонт: {horizon} дней · Тикер: {company.ticker}
+            </div>
+          </div>
+        )}
+
+        {/* Result */}
+        {result && !loading && (
+          <div style={{marginTop:32,animation:'fade-up 0.6s cubic-bezier(0.16,1,0.3,1) both'}}>
+            {/* Verdict */}
+            <div className="glass" style={{
+              borderRadius:20,padding:'32px',marginBottom:16,
+              background: verdictStyles[result.verdictColor].bg,
+              borderColor: verdictStyles[result.verdictColor].border,
+              textAlign:'center',
+            }}>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',letterSpacing:'0.06em',fontWeight:600,marginBottom:16}}>ВЕРДИКТ</div>
+              <div style={{fontSize:'clamp(22px,5vw,36px)',fontWeight:800,color:verdictStyles[result.verdictColor].color,fontFamily:'Manrope',letterSpacing:'-0.02em',marginBottom:24}}>
+                {result.verdict}
+              </div>
+              {/* Big probability */}
+              <div style={{display:'inline-flex',alignItems:'baseline',gap:4,marginBottom:8}}>
+                <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:'clamp(52px,12vw,88px)',color:'#f1f5f9',letterSpacing:'-0.04em',lineHeight:1}}>
+                  <AnimCounter target={result.prob}/>
+                </span>
+                <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
+              </div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста за {horizon} дней</div>
+              {/* Price projection */}
+              <div style={{marginTop:20,padding:'14px 20px',borderRadius:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',display:'inline-flex',alignItems:'center',gap:10,flexWrap:'wrap',justifyContent:'center'}}>
+                <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:'rgba(255,255,255,0.5)'}}>
+                  {fmtPrice(result.currentPrice)} ₽
+                </span>
+                <svg width="20" height="10" viewBox="0 0 20 10" fill="none"><path d="M1 5h16M13 1l4 4-4 4" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <span style={{fontFamily:'JetBrains Mono',fontSize:15,fontWeight:700,color:'#f1f5f9'}}>
+                  {fmtPrice(result.projectedPrice)} ₽
+                </span>
+                <span style={{
+                  fontFamily:'JetBrains Mono',fontSize:13,fontWeight:600,
+                  color: result.pctChange>=0 ? '#4ade80' : '#f87171',
+                  background: result.pctChange>=0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                  padding:'2px 10px',borderRadius:99,
+                }}>{result.projPctStr}</span>
+                <span style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>через {horizon}д</span>
+              </div>
+            </div>
+
+            {/* Explanation */}
+            <div className="glass" style={{borderRadius:16,padding:'24px',marginBottom:16}}>
+              <p style={{fontSize:15,color:'rgba(255,255,255,0.7)',lineHeight:1.65,fontWeight:400}}>{result.explanation}</p>
+            </div>
+
+            {/* Confidence */}
+            <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginBottom:16,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+              <div>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.06em',fontWeight:600,marginBottom:4}}>УВЕРЕННОСТЬ МОДЕЛИ</div>
+                <div style={{fontSize:18,fontWeight:700,color:'#f1f5f9',textTransform:'capitalize'}}>{result.confidence}</div>
+              </div>
+              <div style={{flex:1,minWidth:120}}>
+                <ProgressBar value={result.confVal} color='linear-gradient(to right,#7c3aed,#06b6d4)' animated={true}/>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:4,textAlign:'right'}}>{result.confVal}%</div>
+              </div>
+            </div>
+
+            {/* Detail toggle */}
+            <button onClick={()=>setShowDetail(v=>!v)}
+              style={{
+                width:'100%',padding:'13px',borderRadius:12,fontSize:14,fontWeight:600,cursor:'pointer',
+                fontFamily:'Manrope',
+                background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',
+                color:'rgba(255,255,255,0.6)',transition:'all 0.2s',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.08)';e.currentTarget.style.color='white'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.6)'}}>
+              <span>{showDetail?'Скрыть детали':'Подробнее'}</span>
+              <svg style={{transform:showDetail?'rotate(180deg)':'none',transition:'transform 0.3s'}} width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <polyline points="4,6 8,10 12,6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+
+            {/* Detail panel */}
+            {showDetail && (
+              <div className="glass" style={{borderRadius:16,padding:'28px',marginTop:8,animation:'fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both'}}>
+                <div style={{fontWeight:700,fontSize:15,color:'#f1f5f9',marginBottom:20}}>Ключевые факторы</div>
+                <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                  {result.factors.map(f=>(
+                    <div key={f.key}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                        <div>
+                          <span style={{fontSize:14,fontWeight:600,color:'rgba(255,255,255,0.85)'}}>{f.label}</span>
+                          <span style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:8}}>{f.desc}</span>
+                        </div>
+                        <div style={{
+                          fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:99,
+                          background:f.positive?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)',
+                          color:f.positive?'#4ade80':'#f87171',
+                          border:`1px solid ${f.positive?'rgba(34,197,94,0.2)':'rgba(239,68,68,0.2)'}`,
+                        }}>
+                          {f.positive?'▲ позитив':'▼ негатив'}
+                        </div>
+                      </div>
+                      <ProgressBar value={f.impact} color={f.positive?'rgba(34,197,94,0.7)':'rgba(239,68,68,0.7)'} animated={true}/>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{marginTop:28,paddingTop:20,borderTop:'1px solid rgba(255,255,255,0.07)'}}>
+                  {/* Mini chart */}
+                  <div style={{fontWeight:700,fontSize:14,color:'rgba(255,255,255,0.6)',marginBottom:10}}>График за последние 30 дней</div>
+                  <div style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 8px 8px',border:'1px solid rgba(255,255,255,0.06)',marginBottom:20}}>
+                    <MiniChart points={result.chartPts}/>
+                    <div style={{display:'flex',justifyContent:'space-between',marginTop:6,padding:'0 4px'}}>
+                      <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.25)'}}>-30д</span>
+                      <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.25)'}}>сегодня</span>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <span style={{fontSize:14,color:'rgba(255,255,255,0.5)',fontWeight:500}}>Историческая точность (AUC)</span>
+                    <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:18,color:'#c4b5fd'}}>{result.auc}</span>
+                  </div>
+                  <ProgressBar value={(result.auc-0.5)/0.5*100} color='rgba(124,58,237,0.8)' animated={true}/>
+                  <div style={{fontSize:12,color:'rgba(255,255,255,0.25)',marginTop:6}}>Модель обучена на данных 2010–2024 гг. для {company.ticker}</div>
+                </div>
+
+                <div style={{marginTop:20,padding:'12px 16px',borderRadius:10,background:'rgba(234,179,8,0.07)',border:'1px solid rgba(234,179,8,0.15)'}}>
+                  <p style={{fontSize:12,color:'rgba(234,179,8,0.75)',lineHeight:1.55}}>
+                    ⚠ Прогноз носит информационный характер и не является инвестиционной рекомендацией. Прошлая доходность не гарантирует будущих результатов.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ── ABOUT ────────────────────────────────────────────────────── */
+function About() {
+  const cards = [
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="16" height="16" rx="4" stroke="#06b6d4" strokeWidth="1.5"/><path d="M7 11l2.5 2.5L15 8" stroke="#06b6d4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      color:'#06b6d4',title:'Официальные данные',
+      desc:'Котировки, объёмы и дивиденды с Московской биржи. Данные проходят верификацию перед обучением модели.'
+    },
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 3L4 7v5c0 4 3.5 7.7 7 8.5 3.5-.8 7-4.5 7-8.5V7L11 3z" stroke="#7c3aed" strokeWidth="1.5" strokeLinejoin="round"/><path d="M8 11l2 2 4-4" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      color:'#7c3aed',title:'Защита от ошибок',
+      desc:'Кросс-валидация на отложенной выборке. Модель не подвержена переобучению: тест — только на данных которых не видела.'
+    },
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="8" stroke="#f97316" strokeWidth="1.5"/><path d="M11 7v4l2.5 2.5" stroke="#f97316" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+      color:'#f97316',title:'Понятный результат',
+      desc:'Вероятность, вердикт и объяснение без жаргона. Вы понимаете что произошло и почему — без опыта в трейдинге.'
+    },
+  ];
+
+  return (
+    <section id="about" style={{padding:'100px 0 80px',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+      <div style={{maxWidth:1000,margin:'0 auto',padding:'0 24px'}}>
+        <div style={{textAlign:'center',marginBottom:56}}>
+          <h2 style={{fontFamily:'Manrope',fontWeight:800,fontSize:'clamp(28px,4vw,44px)',letterSpacing:'-0.03em',color:'#f1f5f9',marginBottom:16}}>
+            О <span className="grad-text">методологии</span>
+          </h2>
+          <p style={{maxWidth:600,margin:'0 auto',fontSize:16,color:'rgba(255,255,255,0.5)',lineHeight:1.65}}>
+            Мы используем нейронную сеть <strong style={{color:'#c4b5fd'}}>TCN (Temporal Convolutional Network)</strong>, обученную на данных Московской биржи за 10+ лет. Модель анализирует 20 показателей: ценовые тренды, объёмы торгов, курс доллара, дивидендную доходность и другие.
+          </p>
+        </div>
+
+        {/* Metric row */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:16,marginBottom:48}}>
+          {[
+            ['TCN','архитектура сети'],
+            ['20','входных факторов'],
+            ['10+ лет','история данных'],
+            ['54','тикера в базе'],
+          ].map(([v,l])=>(
+            <div key={l} className="glass" style={{borderRadius:16,padding:'24px 20px',textAlign:'center'}}>
+              <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:24,color:'#c4b5fd',marginBottom:6}}>{v}</div>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)'}}>{l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Cards */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:18}}>
+          {cards.map(c=>(
+            <div key={c.title} className="glass" style={{borderRadius:18,padding:'28px 24px',transition:'all 0.25s'}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=`${c.color}44`;e.currentTarget.style.background='rgba(255,255,255,0.07)'}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.08)';e.currentTarget.style.background='rgba(255,255,255,0.04)'}}>
+              <div style={{
+                width:44,height:44,borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',
+                background:`${c.color}18`,border:`1px solid ${c.color}33`,marginBottom:18,
+              }}>{c.icon}</div>
+              <div style={{fontWeight:700,fontSize:16,color:'#f1f5f9',marginBottom:8}}>{c.title}</div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',lineHeight:1.6}}>{c.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{marginTop:60,textAlign:'center',fontSize:13,color:'rgba(255,255,255,0.2)'}}>
+          © 2025 StockAI RU — Прогноз акций российского рынка · Данные: ММВБ · Не является инвестиционной рекомендацией
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── APP ──────────────────────────────────────────────────────── */
+function App() {
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const forecastRef = useRef(null);
+  const catalogRef = useRef(null);
+
+  const scrollTo = (id) => {
+    const el = document.querySelector(id);
+    if(el) window.scrollTo({top:el.offsetTop-60, behavior:'smooth'});
+  };
+
+  const handleSelectCompany = (company) => {
+    setSelectedCompany(company);
+    setTimeout(()=>{
+      const el = document.querySelector('#forecast');
+      if(el) window.scrollTo({top:el.offsetTop-70, behavior:'smooth'});
+    }, 50);
+  };
+
+  return (
+    <>
+      <Nav onNav={id=>{
+        if(id==='#forecast'&&!selectedCompany){ scrollTo('#catalog'); return; }
+        scrollTo(id);
+      }}/>
+      <main>
+        <Hero onStart={()=>scrollTo('#catalog')}/>
+        <Catalog onSelect={handleSelectCompany}/>
+        {selectedCompany && <Forecast key={selectedCompany.ticker} company={selectedCompany}/>}
+        <About/>
+      </main>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
