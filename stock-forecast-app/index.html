@@ -160,7 +160,8 @@ const COMPANIES = [
   { ticker:'RENI',  name:'Ренессанс Страхование',sector:'finance'  },
 ];
 
-const HORIZONS = [5,10,30,60,120,240,360];
+const API_BASE = (window.__API_BASE__ || 'https://stock-forecast-backen-rmclwnun.fly.dev').replace(/\/$/,'');
+const FORECAST_HORIZON_DAYS = 5;
 
 /* ── BASE PRICES (правдоподобные цены в рублях) ──────────────── */
 const BASE_PRICES = {
@@ -217,53 +218,49 @@ function seededRand(seed) {
   };
 }
 
-function genForecast(ticker, horizon) {
-  const seed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0) * (horizon+7);
-  const rng = seededRand(seed);
-  const prob = Math.round(35 + rng()*40); // 35–75%
-  const confidence = ['низкий','средний','высокий'][Math.floor(rng()*3)];
-  const confVal = Math.round(30 + rng()*65);
-  const auc = +(0.55 + rng()*0.15).toFixed(2);
-  const factors = FACTOR_NAMES.map(f => {
-    const impact = Math.round(20+rng()*75);
-    const positive = rng()>0.45;
-    return { ...f, impact, positive };
+async function fetchForecast(ticker) {
+  const r = await fetch(`${API_BASE}/api/forecast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker }),
   });
-  // прогнозная цена
-  const basePrice = BASE_PRICES[ticker] || 100;
-  const dayChange = getDayChange(ticker);
-  const currentPrice = +(basePrice * (1 + dayChange/100)).toFixed(basePrice < 1 ? 4 : basePrice < 10 ? 2 : 0);
-  // ожидаемое изменение: зависит от prob и горизонта
-  const direction = prob >= 55 ? 1 : prob <= 44 ? -1 : (rng()>0.5?1:-1);
-  const pctChange = direction * (Math.abs(prob-50)/50) * (horizon/365) * (0.15 + rng()*0.25) * 100;
-  const projectedPrice = +(currentPrice * (1 + pctChange/100));
-  const projPctStr = (pctChange >= 0 ? '+' : '') + pctChange.toFixed(1) + '%';
-
-  let verdict, verdictColor;
-  if(prob >= 55){ verdict='Вероятен рост'; verdictColor='success'; }
-  else if(prob <= 44){ verdict='Вероятно снижение'; verdictColor='danger'; }
-  else { verdict='Нейтрально'; verdictColor='warning'; }
-
-  const company = COMPANIES.find(c=>c.ticker===ticker);
-  const sectorLabel = SECTORS[company?.sector]?.label||'';
-  const riskLevel = confVal > 65 ? 'умеренный' : confVal > 40 ? 'повышенный' : 'высокий';
-  const explanation = prob>=55
-    ? `На основании анализа данных за 10 лет, акции ${company?.name} с вероятностью ${prob}% покажут рост в ближайшие ${horizon} дней. Ожидаемая цена — около ${fmtPrice(projectedPrice)} ₽ (${projPctStr} от текущей). Текущий уровень риска ${riskLevel}, рыночная ситуация благоприятна для сектора «${sectorLabel}».`
-    : prob<=44
-    ? `Анализ исторических данных показывает, что акции ${company?.name} с вероятностью ${100-prob}% могут снизиться в ближайшие ${horizon} дней. Прогнозная цена — около ${fmtPrice(projectedPrice)} ₽ (${projPctStr}). Уровень риска ${riskLevel}, рекомендуем проявить осторожность.`
-    : `Прогноз для ${company?.name} на ${horizon} дней неоднозначный. Рынок в состоянии неопределённости, вероятности роста и снижения близки. Ориентировочная цена: ${fmtPrice(projectedPrice)} ₽ (${projPctStr}).`;
-
-  // мини-график: 30 точек за «последний месяц»
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(`API ${r.status}: ${txt.slice(0,200)}`);
+  }
+  const d = await r.json();
+  // Normalize to the shape the UI expects.
+  const prob = Math.round(d.prob_up * 100);
+  const projPctStr = (d.pct_change >= 0 ? '+' : '') + d.pct_change.toFixed(2) + '%';
+  // Build a synthetic 30-day mini-chart that ends at current_price.
+  const seed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
   const chartRng = seededRand(seed + 99991);
   const chartPts = [];
-  let cp = basePrice;
-  for(let i=0;i<30;i++){
-    cp = cp * (1 + (chartRng()-0.5)*0.04);
-    chartPts.push(cp);
+  let cp = d.current_price;
+  for (let i = 29; i >= 0; i--) {
+    chartPts.unshift(cp);
+    cp = cp / (1 + (chartRng() - 0.5) * 0.04);
   }
-
-  return { prob, verdict, verdictColor, confidence, confVal, auc, factors, explanation,
-           currentPrice, projectedPrice, projPctStr, pctChange, chartPts, dayChange };
+  chartPts[chartPts.length - 1] = d.current_price;
+  return {
+    prob,
+    verdict: d.verdict,
+    verdictColor: d.verdict_color,
+    confidence: d.confidence,
+    confVal: d.confidence_val,
+    auc: d.auc,
+    factors: d.factors,
+    explanation: d.explanation,
+    currentPrice: d.current_price,
+    projectedPrice: d.projected_price,
+    projPctStr,
+    pctChange: d.pct_change,
+    chartPts,
+    dayChange: 0,
+    lastBarDate: d.last_bar_date,
+    modelNote: d.model_note,
+    horizonDays: d.horizon_days,
+  };
 }
 
 /* ── MINI CHART ───────────────────────────────────────────────── */
@@ -616,33 +613,48 @@ function AnimCounter({target}) {
 
 /* ── FORECAST ─────────────────────────────────────────────────── */
 function Forecast({company}) {
-  const [horizon,setHorizon] = useState(30);
+  const horizon = FORECAST_HORIZON_DAYS;
   const [loading,setLoading] = useState(false);
   const [result,setResult] = useState(null);
+  const [error,setError] = useState(null);
   const [loadMsg,setLoadMsg] = useState(0);
   const [showDetail,setShowDetail] = useState(false);
   const loadRef = useRef(null);
 
-  useEffect(()=>{ setResult(null); setShowDetail(false); },[company]);
+  useEffect(()=>{ setResult(null); setShowDetail(false); setError(null); },[company]);
 
-  const doForecast = () => {
-    setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0);
+  const doForecast = async () => {
+    setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0); setError(null);
     let i=0;
     loadRef.current = setInterval(()=>{
       i++; setLoadMsg(i%LOADING_MSGS.length);
     },2000);
-    setTimeout(()=>{
-      clearInterval(loadRef.current);
-      setLoading(false);
-      setResult(genForecast(company.ticker,horizon));
-    }, 7000);
+    const startedAt = Date.now();
+    let apiResult = null;
+    let apiError = null;
+    try {
+      apiResult = await fetchForecast(company.ticker);
+    } catch (e) {
+      apiError = e;
+    }
+    // Keep the loading animation visible for at least a few seconds.
+    const elapsed = Date.now() - startedAt;
+    const minLoading = 3500;
+    if (elapsed < minLoading) await new Promise(r=>setTimeout(r, minLoading - elapsed));
+    clearInterval(loadRef.current);
+    setLoading(false);
+    if (apiError) {
+      setError(apiError.message || String(apiError));
+    } else {
+      setResult(apiResult);
+    }
   };
 
   useEffect(()=>()=>clearInterval(loadRef.current),[]);
 
   if(!company) return null;
   const sec = SECTORS[company.sector];
-  const currentPrice = +(( BASE_PRICES[company.ticker]||100) * (1 + getDayChange(company.ticker)/100));
+  const currentPrice = result ? result.currentPrice : +(( BASE_PRICES[company.ticker]||100) * (1 + getDayChange(company.ticker)/100));
   const dayChange = getDayChange(company.ticker);
   const isDayUp = dayChange >= 0;
 
@@ -686,23 +698,16 @@ function Forecast({company}) {
           </div>
         </div>
 
-        {/* Horizon selector */}
+        {/* Horizon info */}
         <div style={{marginBottom:28}}>
           <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,letterSpacing:'0.04em'}}>ГОРИЗОНТ ПРОГНОЗА</div>
-          <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
-            {HORIZONS.map(h=>(
-              <button key={h} onClick={()=>setHorizon(h)}
-                style={{
-                  padding:'8px 18px',borderRadius:10,fontSize:14,fontWeight:700,cursor:'pointer',
-                  fontFamily:'JetBrains Mono',transition:'all 0.2s',
-                  background: horizon===h ? 'rgba(124,58,237,0.3)' : 'rgba(255,255,255,0.05)',
-                  border: horizon===h ? '1px solid rgba(124,58,237,0.6)' : '1px solid rgba(255,255,255,0.08)',
-                  color: horizon===h ? '#c4b5fd' : 'rgba(255,255,255,0.5)',
-                  boxShadow: horizon===h ? '0 0 16px rgba(124,58,237,0.25)' : 'none',
-                }}>
-                {h}д
-              </button>
-            ))}
+          <div style={{
+            display:'inline-flex',alignItems:'center',gap:10,padding:'10px 18px',borderRadius:12,
+            background:'rgba(124,58,237,0.18)',border:'1px solid rgba(124,58,237,0.4)',
+            boxShadow:'0 0 16px rgba(124,58,237,0.2)',
+          }}>
+            <span style={{fontFamily:'JetBrains Mono',fontSize:18,fontWeight:700,color:'#c4b5fd'}}>{horizon} торговых дней</span>
+            <span style={{fontSize:12,color:'rgba(196,181,253,0.6)'}}>вероятность роста ≥ +2%</span>
           </div>
         </div>
 
@@ -741,6 +746,16 @@ function Forecast({company}) {
           </div>
         )}
 
+        {/* Error state */}
+        {error && !loading && (
+          <div style={{marginTop:24,padding:'20px 24px',borderRadius:16,
+            background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.25)'}}>
+            <div style={{fontSize:14,fontWeight:700,color:'#f87171',marginBottom:6}}>Не удалось получить прогноз</div>
+            <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',lineHeight:1.55}}>{error}</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:8}}>Возможные причины: сервер спит после простоя (первый запрос может занять 30 секунд), отсутствует история торгов или ограничения MOEX.</div>
+          </div>
+        )}
+
         {/* Result */}
         {result && !loading && (
           <div style={{marginTop:32,animation:'fade-up 0.6s cubic-bezier(0.16,1,0.3,1) both'}}>
@@ -762,7 +777,7 @@ function Forecast({company}) {
                 </span>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
               </div>
-              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста за {horizon} дней</div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста ≥ +2% за {horizon} торговых дней</div>
               {/* Price projection */}
               <div style={{marginTop:20,padding:'14px 20px',borderRadius:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',display:'inline-flex',alignItems:'center',gap:10,flexWrap:'wrap',justifyContent:'center'}}>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:'rgba(255,255,255,0.5)'}}>
@@ -778,8 +793,13 @@ function Forecast({company}) {
                   background: result.pctChange>=0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
                   padding:'2px 10px',borderRadius:99,
                 }}>{result.projPctStr}</span>
-                <span style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>через {horizon}д</span>
+                <span style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>через {horizon} торг. дн.</span>
               </div>
+              {result.lastBarDate && (
+                <div style={{marginTop:10,fontSize:11,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono'}}>
+                  Последний бар: {result.lastBarDate}
+                </div>
+              )}
             </div>
 
             {/* Explanation */}
@@ -856,7 +876,7 @@ function Forecast({company}) {
                     <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:18,color:'#c4b5fd'}}>{result.auc}</span>
                   </div>
                   <ProgressBar value={(result.auc-0.5)/0.5*100} color='rgba(124,58,237,0.8)' animated={true}/>
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.25)',marginTop:6}}>Модель обучена на данных 2010–2024 гг. для {company.ticker}</div>
+                  <div style={{fontSize:12,color:'rgba(255,255,255,0.25)',marginTop:6}}>{result.modelNote || `Модель обучена на данных MOEX 2015–2024 гг.`}</div>
                 </div>
 
                 <div style={{marginTop:20,padding:'12px 16px',borderRadius:10,background:'rgba(234,179,8,0.07)',border:'1px solid rgba(234,179,8,0.15)'}}>
@@ -901,16 +921,16 @@ function About() {
             О <span className="grad-text">методологии</span>
           </h2>
           <p style={{maxWidth:600,margin:'0 auto',fontSize:16,color:'rgba(255,255,255,0.5)',lineHeight:1.65}}>
-            Мы используем нейронную сеть <strong style={{color:'#c4b5fd'}}>TCN (Temporal Convolutional Network)</strong>, обученную на данных Московской биржи за 10+ лет. Модель анализирует 20 показателей: ценовые тренды, объёмы торгов, курс доллара, дивидендную доходность и другие.
+            Мы используем рекуррентную сеть <strong style={{color:'#c4b5fd'}}>LSTM (SONNET v3)</strong>, обученную на котировках MOEX с 2015 года. На вход подаётся 30 торговых дней по 15 признакам: доходности за 1/5/10/20 дней, RSI, MACD-гистограмма, волатильность, объёмные соотношения, курс USD/RUB и ценовые позиции относительно Bollinger Bands и SMA. Модель возвращает вероятность движения цены на +2% в ближайшие 5 торговых дней.
           </p>
         </div>
 
         {/* Metric row */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:16,marginBottom:48}}>
           {[
-            ['TCN','архитектура сети'],
-            ['20','входных факторов'],
-            ['10+ лет','история данных'],
+            ['LSTM','архитектура сети'],
+            ['15','входных факторов'],
+            ['30 дн.','длина контекста'],
             ['54','тикера в базе'],
           ].map(([v,l])=>(
             <div key={l} className="glass" style={{borderRadius:16,padding:'24px 20px',textAlign:'center'}}>
