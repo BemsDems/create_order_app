@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # --- Config ---
 
 SEQ_LEN = 30
+PRED_START = "2018-01-01"  # enough for indicators, much faster than 2015
 FEATURE_COLS = [
     "ret_1d",
     "ret_5d",
@@ -283,7 +284,7 @@ def api_quote(ticker: str) -> Dict[str, Any]:
     if cached is not None:
         return cached
 
-    df = fetch_moex_history(t, start="2018-01-01", end=None)
+    df = fetch_moex_history(t, start=PRED_START, end=None)
     if df.empty or len(df) < 2:
         raise HTTPException(status_code=404, detail=f"No MOEX history for ticker={t}")
 
@@ -318,12 +319,12 @@ def _compute_prediction(ticker: str, *, horizon_days: int, job_id: str | None = 
         raise HTTPException(status_code=400, detail="This model supports only horizon_days=5")
 
     step("fetch_moex_history")
-    df_price = fetch_moex_history(t, start="2015-01-01", end=None)
+    df_price = fetch_moex_history(t, start=PRED_START, end=None)
     if df_price.empty:
         raise HTTPException(status_code=404, detail=f"No MOEX history for ticker={t}")
 
     step("fetch_cbr_usdrub")
-    usd = fetch_cbr_usdrub("2015-01-01", None)
+    usd = fetch_cbr_usdrub(PRED_START, None)
 
     step("feature_engineering")
     df_feat = add_stable_features(df_price, usd)
