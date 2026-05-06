@@ -6,7 +6,10 @@
         10
       ],
       "thr": 0.03,
-      "trained_on": 5
+      "trained_on": 5,
+      "pos_rate": 0.207,
+      "adaptive_threshold": 0.193,
+      "label": "Краткосрочный сигнал — модель 5 дней"
     },
     "medium": {
       "horizons": [
@@ -14,7 +17,10 @@
         60
       ],
       "thr": 0.05,
-      "trained_on": 30
+      "trained_on": 30,
+      "pos_rate": 0.321,
+      "adaptive_threshold": 0.242,
+      "label": "Среднесрочный сигнал — модель 30 дней"
     },
     "long": {
       "horizons": [
@@ -23,7 +29,10 @@
         365
       ],
       "thr": 0.12,
-      "trained_on": 120
+      "trained_on": 120,
+      "pos_rate": 0.326,
+      "adaptive_threshold": 0.308,
+      "label": "Долгосрочный сигнал — модель 120 дней"
     }
   },
   "horizon_to_group": {

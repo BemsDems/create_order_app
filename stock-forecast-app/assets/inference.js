@@ -533,7 +533,7 @@
   TCN.weights = {}; // group → W
 
   TCN.loadMeta = async function (baseUrl) {
-    const r = await fetch(baseUrl + '/tcn_meta.json', { cache: 'force-cache' });
+    const r = await fetch(baseUrl + '/tcn_meta.json');
     if (!r.ok) throw new Error('meta load failed: ' + r.status);
     TCN.meta = await r.json();
     return TCN.meta;
@@ -584,10 +584,15 @@
     const h1 = denseRelu(h0, W.d1_k, W.d1_b);
     const prob = denseSigmoid(h1, W.d2_k, W.d2_b);
 
+    const grp = TCN.meta.horizon_groups[group];
     return {
       prob_up: prob,
       group: group,
-      threshold: TCN.meta.horizon_groups[group].thr,
+      threshold: grp.thr,
+      pos_rate: grp.pos_rate,
+      adaptive_threshold: grp.adaptive_threshold,
+      trained_on: grp.trained_on,
+      group_label: grp.label,
     };
   };
 

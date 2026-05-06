@@ -251,31 +251,48 @@ function isoDate(d) {
   return dt.toISOString().slice(0,10);
 }
 
-function buildVerdict(prob_up, threshold, name, sectorLabel, horizon) {
+/* Calibrated verdict using per-group adaptive_threshold (from training):
+   short  P(rise≥+3%/5d)  pos_rate=20.7% adaptive=0.193
+   medium P(rise≥+5%/30d) pos_rate=32.1% adaptive=0.242
+   long   P(rise≥+12%/120d) pos_rate=32.6% adaptive=0.308
+   Probability is NOT compared to 0.5 — it's compared to the model-specific
+   adaptive threshold ± margin. We do NOT label outputs as "price will fall":
+   the model only predicts whether the upside threshold will be hit. */
+const VERDICT_MARGIN = 0.04;
+function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
   const prob_pct = Math.round(prob_up * 100);
+  const adaptive = (out.adaptive_threshold != null) ? out.adaptive_threshold : 0.5;
+  const pos_rate = (out.pos_rate != null) ? out.pos_rate : null;
+  const thr_pct = Math.round(out.threshold * 100);
   const horizon_word = horizon === 1 ? '1 торгового дня' : `${horizon} торговых дней`;
-  let verdict, verdictColor, explanation;
-  if (prob_up >= 0.55) {
-    verdict = 'Вероятен рост';
+  const is_proxy = horizon !== out.trained_on;
+  const trained_word = `${out.trained_on} торговых дней`;
+  const target_phrase = `вырасти ≥ +${thr_pct}% за ${trained_word}`;
+  const proxy_note = is_proxy
+    ? ` (запрошенный горизонт ${horizon_word} обслуживает та же модель, обученная на ${trained_word})`
+    : '';
+  const base_note = (pos_rate != null)
+    ? `На обучении такое событие случалось в ${Math.round(pos_rate * 100)}% случаев, адаптивный порог модели ${adaptive.toFixed(2)}.`
+    : `Адаптивный порог модели ${adaptive.toFixed(2)}.`;
+
+  let verdict, verdictColor, headline;
+  if (prob_up >= adaptive + VERDICT_MARGIN) {
+    verdict = 'Повышенная вероятность';
     verdictColor = 'success';
-    explanation =
-      `Нейросеть оценивает вероятность роста ${name} более чем на ` +
-      `+${Math.round(threshold*100)}% в ближайшие ${horizon_word} в ${prob_pct}%. ` +
-      `Рыночная ситуация в секторе «${sectorLabel}» благоприятна.`;
-  } else if (prob_up <= 0.44) {
-    verdict = 'Вероятно снижение';
+    headline = `Сигнал сильнее базового — модель оценивает шанс ${target_phrase} выше обычного.`;
+  } else if (prob_up <= adaptive - VERDICT_MARGIN) {
+    verdict = 'Низкая вероятность';
     verdictColor = 'danger';
-    explanation =
-      `Анализ показывает, что вероятность снижения ${name} в ближайшие ` +
-      `${horizon_word} составляет ${100 - prob_pct}%. Рекомендуется осторожность.`;
+    headline = `Сигнал слабее базового — модель оценивает шанс ${target_phrase} ниже обычного. Это не означает падение цены.`;
   } else {
-    verdict = 'Нейтрально';
+    verdict = 'Нейтральный сигнал';
     verdictColor = 'warning';
-    explanation =
-      `Прогноз для ${name} на ${horizon_word} неоднозначный: ` +
-      `вероятность роста ${prob_pct}%. Рынок в состоянии неопределённости.`;
+    headline = `Сигнал близок к базовому уровню — модель оценивает шанс ${target_phrase} примерно как в среднем по обучению.`;
   }
-  return { verdict, verdictColor, explanation, prob_pct };
+  const explanation =
+    `Модель TCN оценивает вероятность того, что ${name} ${target_phrase}, в ${prob_pct}%${proxy_note}. ` +
+    `${base_note} Сектор «${sectorLabel}». Прогноз не предсказывает падение цены — только превышение указанного порога роста.`;
+  return { verdict, verdictColor, explanation, headline, prob_pct };
 }
 
 async function fetchForecast(ticker, horizon, company) {
@@ -319,25 +336,35 @@ async function fetchForecast(ticker, horizon, company) {
     ? (data.price.close[data.price.close.length - 1] / data.price.close[data.price.close.length - 2] - 1) * 100
     : 0;
 
-  const signed_move = (2 * prob_up - 1) * out.threshold;
-  const projected_price = last_close * (1 + signed_move);
-  const pct_change = signed_move * 100;
+  /* Expected upside conditional on the threshold being hit (prob_up * threshold).
+     We deliberately do NOT make this negative when prob_up < 0.5 — the model
+     does not predict downside, only upside threshold crossing. */
+  const expected_upside_pct = prob_up * out.threshold * 100;
+  const projected_price = last_close * (1 + prob_up * out.threshold);
 
-  const conf_val = Math.round(Math.min(1, Math.abs(prob_up - 0.5) * 2) * 100);
+  /* Confidence = |prob_up − adaptive_threshold| / max gap; how far the signal is
+     from the per-model neutral level. */
+  const adaptive = out.adaptive_threshold != null ? out.adaptive_threshold : 0.5;
+  const max_gap = Math.max(adaptive, 1 - adaptive);
+  const conf_val = Math.round(Math.min(1, Math.abs(prob_up - adaptive) / max_gap) * 100);
   const confidence = conf_val > 65 ? 'высокий' : (conf_val > 35 ? 'средний' : 'низкий');
 
-  const v = buildVerdict(prob_up, out.threshold, company.name, sectorLabel, horizon);
+  const v = buildVerdict(prob_up, out, company.name, sectorLabel, horizon);
   const factors = TCN.buildFactors(fres.matrix[fres.matrix.length - 1]);
 
   // Real 30-bar tail of close prices for the mini-chart.
   const tail = data.price.close.slice(-30);
   while (tail.length < 30) tail.unshift(tail[0]);
 
-  const trained_on = meta.horizon_groups[out.group].trained_on;
+  const is_proxy = horizon !== out.trained_on;
+  const groupLabel = out.group_label || `Сигнал — модель ${out.trained_on} дней`;
   const modelNote =
-    `Модель TCN (${out.group}) обучена на горизонте ${trained_on} торговых дней (порог ` +
-    `+${Math.round(out.threshold * 100)}%). Запрошенный горизонт (${horizon}д) ` +
-    `обслуживает та же группа моделей.`;
+    `${groupLabel}. Модель оценивает вероятность роста цены на ≥ +${Math.round(out.threshold * 100)}% ` +
+    `за ${out.trained_on} торговых дней. ` +
+    (is_proxy
+      ? `Кнопка «${horizon} дней» использует ту же модель — это приближённый сигнал, не точный прогноз на ${horizon} дней.`
+      : `Точный горизонт обучения.`) +
+    ` Базовая частота на тренировке: ${Math.round(out.pos_rate * 100)}%, адаптивный порог: ${out.adaptive_threshold.toFixed(2)}.`;
 
   return {
     prob: v.prob_pct,
@@ -348,16 +375,22 @@ async function fetchForecast(ticker, horizon, company) {
     auc: 0.62,
     factors,
     explanation: v.explanation,
+    headline: v.headline,
     currentPrice: last_close,
     projectedPrice: projected_price,
-    projPctStr: (pct_change >= 0 ? '+' : '') + pct_change.toFixed(2) + '%',
-    pctChange: pct_change,
+    projPctStr: '+' + expected_upside_pct.toFixed(2) + '%',
+    pctChange: expected_upside_pct,
     chartPts: tail,
     dayChange: day_change,
     lastBarDate: last_date,
     modelNote,
     horizonDays: horizon,
     modelGroup: out.group,
+    groupLabel: groupLabel,
+    trainedOn: out.trained_on,
+    posRate: out.pos_rate,
+    adaptiveThreshold: out.adaptive_threshold,
+    threshold: out.threshold,
     barsUsed: fres.matrix.length,
   };
 }
@@ -913,7 +946,15 @@ function Forecast({company}) {
                 </span>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
               </div>
-              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста ≥ +{horizonGroup(horizon).thrPct}% за {horizon} торговых дней</div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста ≥ +{Math.round((result.threshold||horizonGroup(horizon).thrPct/100)*100)}% за {result.trainedOn||horizon} торговых дней</div>
+              {result.headline && (
+                <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',marginTop:10,maxWidth:520,marginLeft:'auto',marginRight:'auto',lineHeight:1.5}}>{result.headline}</div>
+              )}
+              {result.posRate != null && result.adaptiveThreshold != null && (
+                <div style={{marginTop:12,fontSize:11,color:'rgba(255,255,255,0.32)',fontFamily:'JetBrains Mono',letterSpacing:'0.04em'}}>
+                  базовая частота {Math.round(result.posRate*100)}% · адаптивный порог {result.adaptiveThreshold.toFixed(2)} · вы сейчас на {(result.prob/100).toFixed(2)}
+                </div>
+              )}
               {/* Price projection */}
               <div style={{marginTop:20,padding:'14px 20px',borderRadius:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',display:'inline-flex',alignItems:'center',gap:10,flexWrap:'wrap',justifyContent:'center'}}>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:'rgba(255,255,255,0.5)'}}>
@@ -925,11 +966,11 @@ function Forecast({company}) {
                 </span>
                 <span style={{
                   fontFamily:'JetBrains Mono',fontSize:13,fontWeight:600,
-                  color: result.pctChange>=0 ? '#4ade80' : '#f87171',
-                  background: result.pctChange>=0 ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                  color: '#c4b5fd',
+                  background: 'rgba(124,58,237,0.14)',
                   padding:'2px 10px',borderRadius:99,
                 }}>{result.projPctStr}</span>
-                <span style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>через {horizon} торг. дн.</span>
+                <span style={{fontSize:12,color:'rgba(255,255,255,0.3)'}}>ожидаемый upside · модель {result.trainedOn||horizon} дн.</span>
               </div>
               {result.lastBarDate && (
                 <div style={{marginTop:10,fontSize:11,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono'}}>
