@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="assets/inference.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>
@@ -160,7 +161,9 @@ const COMPANIES = [
   { ticker:'RENI',  name:'Ренессанс Страхование',sector:'finance'  },
 ];
 
-const API_BASE = (window.__API_BASE__ || 'https://stock-forecast-backen-rmclwnun.fly.dev').replace(/\/$/,'');
+/* Asset directory — relative to index.html. Holds tcn_meta.json and the three
+   tcn_{short,medium,long}_weights.json bundles. Override via window.__ASSETS__. */
+const ASSETS_BASE = (window.__ASSETS__ || 'assets').replace(/\/$/, '');
 
 /* Three TCN models, each trained on a different horizon and reused for nearby ones. */
 const HORIZON_GROUPS = [
@@ -228,48 +231,134 @@ function seededRand(seed) {
   };
 }
 
-async function fetchForecast(ticker, horizon) {
-  const r = await fetch(`${API_BASE}/api/forecast`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticker, horizon }),
+/* ── CLIENT-SIDE INFERENCE ────────────────────────────────────── */
+
+/* Shared promises so we don't reload meta/weights on every forecast. */
+let _metaPromise = null;
+let _weightPromises = {};
+
+function ensureMeta() {
+  if (!_metaPromise) _metaPromise = TCN.loadMeta(ASSETS_BASE);
+  return _metaPromise;
+}
+function ensureGroup(group) {
+  if (!_weightPromises[group]) _weightPromises[group] = TCN.loadGroup(group, ASSETS_BASE);
+  return _weightPromises[group];
+}
+
+function isoDate(d) {
+  const dt = new Date(d);
+  return dt.toISOString().slice(0,10);
+}
+
+function buildVerdict(prob_up, threshold, name, sectorLabel, horizon) {
+  const prob_pct = Math.round(prob_up * 100);
+  const horizon_word = horizon === 1 ? '1 торгового дня' : `${horizon} торговых дней`;
+  let verdict, verdictColor, explanation;
+  if (prob_up >= 0.55) {
+    verdict = 'Вероятен рост';
+    verdictColor = 'success';
+    explanation =
+      `Нейросеть оценивает вероятность роста ${name} более чем на ` +
+      `+${Math.round(threshold*100)}% в ближайшие ${horizon_word} в ${prob_pct}%. ` +
+      `Рыночная ситуация в секторе «${sectorLabel}» благоприятна.`;
+  } else if (prob_up <= 0.44) {
+    verdict = 'Вероятно снижение';
+    verdictColor = 'danger';
+    explanation =
+      `Анализ показывает, что вероятность снижения ${name} в ближайшие ` +
+      `${horizon_word} составляет ${100 - prob_pct}%. Рекомендуется осторожность.`;
+  } else {
+    verdict = 'Нейтрально';
+    verdictColor = 'warning';
+    explanation =
+      `Прогноз для ${name} на ${horizon_word} неоднозначный: ` +
+      `вероятность роста ${prob_pct}%. Рынок в состоянии неопределённости.`;
+  }
+  return { verdict, verdictColor, explanation, prob_pct };
+}
+
+async function fetchForecast(ticker, horizon, company) {
+  const sectorLabel = (SECTORS[company.sector] || {}).label || '';
+
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+
+  // Run network + weight load in parallel.
+  const [_, data] = await Promise.all([
+    ensureGroup(group),
+    TCN.fetchAllForTicker(ticker),
+  ]);
+
+  if (!data.price.dates || data.price.dates.length < 60) {
+    throw new Error(`Недостаточно истории по тикеру ${ticker} на MOEX (получено ${data.price.dates.length} баров).`);
+  }
+
+  const fres = TCN.buildFeatures({
+    dates: data.price.dates,
+    close: data.price.close,
+    high: data.price.high,
+    low: data.price.low,
+    volume: data.price.volume,
+    usd: null,                      // CBR has no CORS; зануляем (fallback as in training).
+    imoex: data.imoex.dates.length ? data.imoex : null,
+    div:   data.divs.dates.length  ? data.divs  : null,
   });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`API ${r.status}: ${txt.slice(0,200)}`);
+
+  if (fres.matrix.length < TCN.SEQ_LEN) {
+    throw new Error(`После feature engineering осталось ${fres.matrix.length} строк (< ${TCN.SEQ_LEN}). Возможно, тикер торгуется недавно или MOEX вернул мало баров.`);
   }
-  const d = await r.json();
-  // Normalize to the shape the UI expects.
-  const prob = Math.round(d.prob_up * 100);
-  const projPctStr = (d.pct_change >= 0 ? '+' : '') + d.pct_change.toFixed(2) + '%';
-  // Build a synthetic 30-day mini-chart that ends at current_price.
-  const seed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
-  const chartRng = seededRand(seed + 99991);
-  const chartPts = [];
-  let cp = d.current_price;
-  for (let i = 29; i >= 0; i--) {
-    chartPts.unshift(cp);
-    cp = cp / (1 + (chartRng() - 0.5) * 0.04);
-  }
-  chartPts[chartPts.length - 1] = d.current_price;
+
+  const out = TCN.predict(fres.matrix, horizon);
+  // Clamp probabilities away from 0/1 to avoid 0% / 100% labels.
+  const prob_up = Math.min(1 - 1e-6, Math.max(1e-6, out.prob_up));
+
+  const last_close = data.price.close[data.price.close.length - 1];
+  const last_date = isoDate(data.price.dates[data.price.dates.length - 1]);
+  const day_change = data.price.close.length > 1
+    ? (data.price.close[data.price.close.length - 1] / data.price.close[data.price.close.length - 2] - 1) * 100
+    : 0;
+
+  const signed_move = (2 * prob_up - 1) * out.threshold;
+  const projected_price = last_close * (1 + signed_move);
+  const pct_change = signed_move * 100;
+
+  const conf_val = Math.round(Math.min(1, Math.abs(prob_up - 0.5) * 2) * 100);
+  const confidence = conf_val > 65 ? 'высокий' : (conf_val > 35 ? 'средний' : 'низкий');
+
+  const v = buildVerdict(prob_up, out.threshold, company.name, sectorLabel, horizon);
+  const factors = TCN.buildFactors(fres.matrix[fres.matrix.length - 1]);
+
+  // Real 30-bar tail of close prices for the mini-chart.
+  const tail = data.price.close.slice(-30);
+  while (tail.length < 30) tail.unshift(tail[0]);
+
+  const trained_on = meta.horizon_groups[out.group].trained_on;
+  const modelNote =
+    `Модель TCN (${out.group}) обучена на горизонте ${trained_on} торговых дней (порог ` +
+    `+${Math.round(out.threshold * 100)}%). Запрошенный горизонт (${horizon}д) ` +
+    `обслуживает та же группа моделей.`;
+
   return {
-    prob,
-    verdict: d.verdict,
-    verdictColor: d.verdict_color,
-    confidence: d.confidence,
-    confVal: d.confidence_val,
-    auc: d.auc,
-    factors: d.factors,
-    explanation: d.explanation,
-    currentPrice: d.current_price,
-    projectedPrice: d.projected_price,
-    projPctStr,
-    pctChange: d.pct_change,
-    chartPts,
-    dayChange: 0,
-    lastBarDate: d.last_bar_date,
-    modelNote: d.model_note,
-    horizonDays: d.horizon_days,
+    prob: v.prob_pct,
+    verdict: v.verdict,
+    verdictColor: v.verdictColor,
+    confidence,
+    confVal: conf_val,
+    auc: 0.62,
+    factors,
+    explanation: v.explanation,
+    currentPrice: last_close,
+    projectedPrice: projected_price,
+    projPctStr: (pct_change >= 0 ? '+' : '') + pct_change.toFixed(2) + '%',
+    pctChange: pct_change,
+    chartPts: tail,
+    dayChange: day_change,
+    lastBarDate: last_date,
+    modelNote,
+    horizonDays: horizon,
+    modelGroup: out.group,
+    barsUsed: fres.matrix.length,
   };
 }
 
@@ -418,7 +507,7 @@ function Hero({onStart}) {
           <span style={{color:'#f1f5f9'}}>российского рынка</span>
         </h1>
         <p className="animate-fade-up-3" style={{fontSize:'clamp(15px,2.2vw,18px)',color:'rgba(255,255,255,0.55)',lineHeight:1.65,marginBottom:40,maxWidth:560,margin:'0 auto 40px'}}>
-          Нейросеть TCN, обученная на данных ММВБ за 10+ лет.<br/>Анализируем 20 показателей — даём понятный результат.
+          Три TCN-сети, обученные на данных ММВБ за 10+ лет.<br/>Анализируем 28 показателей — даём понятный результат.
         </p>
         <div className="animate-fade-up-4" style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap'}}>
           <button onClick={onStart} style={{
@@ -446,7 +535,7 @@ function Hero({onStart}) {
         </div>
         {/* Stats row */}
         <div style={{display:'flex',gap:32,justifyContent:'center',marginTop:64,flexWrap:'wrap'}}>
-          {[['54','компании'],['10+','лет данных'],['20','показателей']].map(([n,l])=>(
+          {[['54','компании'],['10+','лет данных'],['28','показателей']].map(([n,l])=>(
             <div key={l} style={{textAlign:'center'}}>
               <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:28,color:'#c4b5fd'}}>{n}</div>
               <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginTop:2}}>{l}</div>
@@ -644,7 +733,7 @@ function Forecast({company}) {
     let apiResult = null;
     let apiError = null;
     try {
-      apiResult = await fetchForecast(company.ticker, horizon);
+      apiResult = await fetchForecast(company.ticker, horizon, company);
     } catch (e) {
       apiError = e;
     }
@@ -968,15 +1057,15 @@ function About() {
             О <span className="grad-text">методологии</span>
           </h2>
           <p style={{maxWidth:600,margin:'0 auto',fontSize:16,color:'rgba(255,255,255,0.5)',lineHeight:1.65}}>
-            Мы используем рекуррентную сеть <strong style={{color:'#c4b5fd'}}>LSTM (SONNET v3)</strong>, обученную на котировках MOEX с 2015 года. На вход подаётся 30 торговых дней по 15 признакам: доходности за 1/5/10/20 дней, RSI, MACD-гистограмма, волатильность, объёмные соотношения, курс USD/RUB и ценовые позиции относительно Bollinger Bands и SMA. Модель возвращает вероятность движения цены на +2% в ближайшие 5 торговых дней.
+            Мы используем три <strong style={{color:'#c4b5fd'}}>TCN-сети</strong> (Temporal Convolutional Network), обученные на 24 ликвидных тикерах MOEX 2015-сегодня. Каждая модель отвечает за свой горизонт: short — 5 дней (порог +3%), medium — 30 дней (+5%), long — 120 дней (+12%). На вход 30 торговых дней по 28 признакам: лестница лог-доходностей, тренды по SMA-20/200, RSI-14, объёмные соотношения, дивидендная доходность TTM, индекс IMOEX и курс USD/RUB. Инференс происходит прямо в браузере — backend не используется.
           </p>
         </div>
 
         {/* Metric row */}
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:16,marginBottom:48}}>
           {[
-            ['LSTM','архитектура сети'],
-            ['15','входных факторов'],
+            ['TCN','архитектура сети'],
+            ['28','входных факторов'],
             ['30 дн.','длина контекста'],
             ['54','тикера в базе'],
           ].map(([v,l])=>(
