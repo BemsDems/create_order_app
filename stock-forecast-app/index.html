@@ -161,7 +161,17 @@ const COMPANIES = [
 ];
 
 const API_BASE = (window.__API_BASE__ || 'https://stock-forecast-backen-rmclwnun.fly.dev').replace(/\/$/,'');
-const FORECAST_HORIZON_DAYS = 5;
+
+/* Three TCN models, each trained on a different horizon and reused for nearby ones. */
+const HORIZON_GROUPS = [
+  { key:'short',  label:'Короткий',  horizons:[5, 10],         thrPct:3,  desc:'Модель TCN, обучена на 5-дневном таргете.' },
+  { key:'medium', label:'Средний',   horizons:[30, 60],        thrPct:5,  desc:'Модель TCN, обучена на 30-дневном таргете.' },
+  { key:'long',   label:'Длинный',   horizons:[120, 240, 365], thrPct:12, desc:'Модель TCN, обучена на 120-дневном таргете.' },
+];
+const DEFAULT_HORIZON = 5;
+function horizonGroup(h) {
+  return HORIZON_GROUPS.find(g => g.horizons.includes(h)) || HORIZON_GROUPS[0];
+}
 
 /* ── BASE PRICES (правдоподобные цены в рублях) ──────────────── */
 const BASE_PRICES = {
@@ -218,11 +228,11 @@ function seededRand(seed) {
   };
 }
 
-async function fetchForecast(ticker) {
+async function fetchForecast(ticker, horizon) {
   const r = await fetch(`${API_BASE}/api/forecast`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ticker }),
+    body: JSON.stringify({ ticker, horizon }),
   });
   if (!r.ok) {
     const txt = await r.text();
@@ -613,7 +623,7 @@ function AnimCounter({target}) {
 
 /* ── FORECAST ─────────────────────────────────────────────────── */
 function Forecast({company}) {
-  const horizon = FORECAST_HORIZON_DAYS;
+  const [horizon, setHorizon] = useState(DEFAULT_HORIZON);
   const [loading,setLoading] = useState(false);
   const [result,setResult] = useState(null);
   const [error,setError] = useState(null);
@@ -621,7 +631,8 @@ function Forecast({company}) {
   const [showDetail,setShowDetail] = useState(false);
   const loadRef = useRef(null);
 
-  useEffect(()=>{ setResult(null); setShowDetail(false); setError(null); },[company]);
+  useEffect(()=>{ setResult(null); setShowDetail(false); setError(null); setHorizon(DEFAULT_HORIZON); },[company]);
+  useEffect(()=>{ setResult(null); setError(null); },[horizon]);
 
   const doForecast = async () => {
     setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0); setError(null);
@@ -633,7 +644,7 @@ function Forecast({company}) {
     let apiResult = null;
     let apiError = null;
     try {
-      apiResult = await fetchForecast(company.ticker);
+      apiResult = await fetchForecast(company.ticker, horizon);
     } catch (e) {
       apiError = e;
     }
@@ -698,16 +709,52 @@ function Forecast({company}) {
           </div>
         </div>
 
-        {/* Horizon info */}
+        {/* Horizon picker */}
         <div style={{marginBottom:28}}>
-          <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,letterSpacing:'0.04em'}}>ГОРИЗОНТ ПРОГНОЗА</div>
-          <div style={{
-            display:'inline-flex',alignItems:'center',gap:10,padding:'10px 18px',borderRadius:12,
-            background:'rgba(124,58,237,0.18)',border:'1px solid rgba(124,58,237,0.4)',
-            boxShadow:'0 0 16px rgba(124,58,237,0.2)',
-          }}>
-            <span style={{fontFamily:'JetBrains Mono',fontSize:18,fontWeight:700,color:'#c4b5fd'}}>{horizon} торговых дней</span>
-            <span style={{fontSize:12,color:'rgba(196,181,253,0.6)'}}>вероятность роста ≥ +2%</span>
+          <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginBottom:12,fontWeight:600,letterSpacing:'0.04em'}}>ГОРИЗОНТ ПРОГНОЗА</div>
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            {HORIZON_GROUPS.map(group => {
+              const isActiveGroup = group.horizons.includes(horizon);
+              return (
+                <div key={group.key} style={{
+                  padding:'14px 18px',borderRadius:14,
+                  background: isActiveGroup ? 'rgba(124,58,237,0.12)' : 'rgba(255,255,255,0.03)',
+                  border:`1px solid ${isActiveGroup ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.07)'}`,
+                  transition:'all 0.25s',
+                  boxShadow: isActiveGroup ? '0 0 18px rgba(124,58,237,0.18)' : 'none',
+                }}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:10}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:isActiveGroup?'#c4b5fd':'rgba(255,255,255,0.7)',letterSpacing:'0.04em'}}>
+                        {group.label.toUpperCase()} ГОРИЗОНТ
+                      </div>
+                      <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:2}}>
+                        порог +{group.thrPct}% · {group.desc}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {group.horizons.map(h => {
+                      const active = h === horizon;
+                      return (
+                        <button key={h} onClick={()=>setHorizon(h)} disabled={loading}
+                          style={{
+                            padding:'8px 16px',borderRadius:99,fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,
+                            cursor:loading?'default':'pointer',transition:'all 0.2s',
+                            background: active ? 'linear-gradient(135deg,#7c3aed,#5b21b6)' : 'rgba(255,255,255,0.04)',
+                            color: active ? '#fff' : 'rgba(255,255,255,0.7)',
+                            border: `1px solid ${active ? 'transparent' : 'rgba(255,255,255,0.08)'}`,
+                            boxShadow: active ? '0 4px 16px rgba(124,58,237,0.35)' : 'none',
+                            opacity: loading ? 0.6 : 1,
+                          }}>
+                          {h} {h === 1 ? 'день' : (h<5?'дня':'дней')}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -741,7 +788,7 @@ function Forecast({company}) {
               {LOADING_MSGS[loadMsg]}
             </div>
             <div style={{marginTop:12,fontSize:13,color:'rgba(255,255,255,0.3)'}}>
-              Горизонт: {horizon} дней · Тикер: {company.ticker}
+              Горизонт: {horizon} торг. дней · Тикер: {company.ticker} · {horizonGroup(horizon).label.toLowerCase()} модель
             </div>
           </div>
         )}
@@ -777,7 +824,7 @@ function Forecast({company}) {
                 </span>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
               </div>
-              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста ≥ +2% за {horizon} торговых дней</div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>вероятность роста ≥ +{horizonGroup(horizon).thrPct}% за {horizon} торговых дней</div>
               {/* Price projection */}
               <div style={{marginTop:20,padding:'14px 20px',borderRadius:12,background:'rgba(255,255,255,0.05)',border:'1px solid rgba(255,255,255,0.08)',display:'inline-flex',alignItems:'center',gap:10,flexWrap:'wrap',justifyContent:'center'}}>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:14,color:'rgba(255,255,255,0.5)'}}>

@@ -38,6 +38,32 @@ def _parse_iso(s: str) -> np.datetime64:
     return np.datetime64(s[:10])
 
 
+def _fetch_history_paged(url: str, start: str, end: str | None) -> tuple[list[str], list[list]]:
+    rows: list[list] = []
+    cols: list[str] = []
+    start_pos = 0
+    while True:
+        params = {
+            "from": start,
+            "till": end,
+            "iss.meta": "off",
+            "iss.only": "history",
+            "history.columns": "TRADEDATE,OPEN,HIGH,LOW,CLOSE,VOLUME,VALUE",
+            "start": start_pos,
+        }
+        r = _get_with_retry(url, params)
+        block = r.json().get("history", {})
+        cols = block.get("columns", cols) or cols
+        data = block.get("data", [])
+        if not data:
+            break
+        rows.extend(data)
+        start_pos += len(data)
+        if len(data) < 100:
+            break
+    return cols, rows
+
+
 def fetch_moex_history(secid: str, start: str, end: str | None = None) -> dict[str, np.ndarray]:
     """Fetch OHLCV daily bars from MOEX ISS history endpoint.
 
@@ -121,3 +147,90 @@ def fetch_cbr_usdrub(start: str, end: str | None = None) -> tuple[np.ndarray, np
     v = np.array(values, dtype=np.float64)
     order = np.argsort(d)
     return d[order], v[order]
+
+
+def fetch_imoex_history(start: str, end: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Fetch IMOEX daily close from MOEX ISS index history endpoint."""
+    url = "https://iss.moex.com/iss/history/engines/stock/markets/index/securities/IMOEX.json"
+    cols, rows = _fetch_history_paged(url, start, end)
+    if not rows:
+        return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
+    idx = {c: i for i, c in enumerate(cols)}
+    dates = np.array([_parse_iso(str(r[idx["TRADEDATE"]])) for r in rows], dtype="datetime64[D]")
+    closes = np.array(
+        [r[idx["CLOSE"]] if r[idx["CLOSE"]] is not None else np.nan for r in rows],
+        dtype=np.float64,
+    )
+    order = np.argsort(dates)
+    dates = dates[order]
+    closes = closes[order]
+    keep = ~np.isnan(closes)
+    return dates[keep], closes[keep]
+
+
+def fetch_usd000_history(start: str, end: str | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """Fetch USD000UTSTOM (MOEX TOM USD/RUB) daily close as the macro USD series.
+
+    NOTE: After mid-2024 MOEX USD/RUB stopped trading on the public CETS board
+    (sanctions). The endpoint still returns rows, but with zero CLOSE/HIGH/LOW
+    fields for those dates, so we filter those out and only keep meaningful
+    quotes. The caller is expected to fall back to CBR when the result is empty.
+    """
+    url = "https://iss.moex.com/iss/history/engines/currency/markets/selt/securities/USD000UTSTOM.json"
+    cols, rows = _fetch_history_paged(url, start, end)
+    if not rows:
+        return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
+    idx = {c: i for i, c in enumerate(cols)}
+    dates = np.array([_parse_iso(str(r[idx["TRADEDATE"]])) for r in rows], dtype="datetime64[D]")
+    closes = np.array(
+        [r[idx["CLOSE"]] if r[idx["CLOSE"]] is not None else np.nan for r in rows],
+        dtype=np.float64,
+    )
+    order = np.argsort(dates)
+    dates = dates[order]
+    closes = closes[order]
+    # Drop rows where the close is missing OR equal to zero (delisted board).
+    keep = ~np.isnan(closes) & (closes > 1.0)
+    return dates[keep], closes[keep]
+
+
+def fetch_moex_dividends(secid: str) -> tuple[np.ndarray, np.ndarray]:
+    """Fetch full dividend history (RUB only) from MOEX ISS.
+
+    Returns (registry_close_dates, values_per_share). Sorted by date ascending.
+    On any failure returns empty arrays.
+    """
+    url = f"https://iss.moex.com/iss/securities/{secid}/dividends.json"
+    try:
+        r = _get_with_retry(url, {"iss.meta": "off"})
+        block = r.json().get("dividends", {})
+        cols = block.get("columns", [])
+        rows = block.get("data", [])
+        if not rows:
+            return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
+        idx = {c: i for i, c in enumerate(cols)}
+        if "registryclosedate" not in idx or "value" not in idx:
+            return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
+        dates: list[np.datetime64] = []
+        values: list[float] = []
+        for row in rows:
+            cur = row[idx["currencyid"]] if "currencyid" in idx else "RUB"
+            if str(cur).upper() != "RUB":
+                continue
+            d = row[idx["registryclosedate"]]
+            v = row[idx["value"]]
+            if d is None or v is None:
+                continue
+            try:
+                dates.append(np.datetime64(str(d)[:10]))
+                values.append(float(v))
+            except (TypeError, ValueError):
+                continue
+        if not dates:
+            return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
+        d = np.array(dates, dtype="datetime64[D]")
+        v = np.array(values, dtype=np.float64)
+        order = np.argsort(d)
+        return d[order], v[order]
+    except Exception:  # noqa: BLE001
+        return np.array([], dtype="datetime64[D]"), np.array([], dtype=np.float64)
