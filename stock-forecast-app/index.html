@@ -251,14 +251,30 @@ function isoDate(d) {
   return dt.toISOString().slice(0,10);
 }
 
-/* Calibrated verdict using per-group adaptive_threshold (from training):
-   short  P(rise≥+3%/5d)  pos_rate=20.7% adaptive=0.193
-   medium P(rise≥+5%/30d) pos_rate=32.1% adaptive=0.242
-   long   P(rise≥+12%/120d) pos_rate=32.6% adaptive=0.308
-   Probability is NOT compared to 0.5 — it's compared to the model-specific
-   adaptive threshold ± margin. We do NOT label outputs as "price will fall":
-   the model only predicts whether the upside threshold will be hit. */
-const VERDICT_MARGIN = 0.04;
+/* Calibrated 5-level verdict from signal_score = prob_up − adaptive_threshold.
+   Per training (pos_rate / adaptive_threshold):
+     short  P(rise≥+3%/5d)   20.7% / 0.193
+     medium P(rise≥+5%/30d)  32.1% / 0.242
+     long   P(rise≥+12%/120d) 32.6% / 0.308
+   Bands (in probability points, NOT percent):
+       ≥ +0.08   strong-up    Сильно выше нормы
+       ≥ +0.03   up           Выше нормы
+     |  | < 0.03 neutral      Нейтрально
+       ≤ −0.03   down         Ниже нормы
+       ≤ −0.08   strong-down  Сильно ниже нормы
+   We never write "price will fall" — the model only learns the upside event. */
+const SIGNAL_BANDS = {
+  strongUp: 0.08,
+  up:       0.03,
+};
+function classifySignal(prob_up, adaptive) {
+  const score = prob_up - adaptive;
+  if (score >=  SIGNAL_BANDS.strongUp)   return { key: 'strong-up',   label: 'Сильно выше нормы',  score };
+  if (score >=  SIGNAL_BANDS.up)         return { key: 'up',          label: 'Выше нормы',         score };
+  if (score <= -SIGNAL_BANDS.strongUp)   return { key: 'strong-down', label: 'Сильно ниже нормы',  score };
+  if (score <= -SIGNAL_BANDS.up)         return { key: 'down',        label: 'Ниже нормы',         score };
+  return                                       { key: 'neutral',     label: 'Нейтрально',         score };
+}
 function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
   const prob_pct = Math.round(prob_up * 100);
   const adaptive = (out.adaptive_threshold != null) ? out.adaptive_threshold : 0.5;
@@ -267,7 +283,8 @@ function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
   const horizon_word = horizon === 1 ? '1 торгового дня' : `${horizon} торговых дней`;
   const is_proxy = horizon !== out.trained_on;
   const trained_word = `${out.trained_on} торговых дней`;
-  const target_phrase = `вырасти ≥ +${thr_pct}% за ${trained_word}`;
+  const target_phrase = `вырастет на ≥ +${thr_pct}% за ${trained_word}`;
+  const target_phrase_inf = `роста ≥ +${thr_pct}% за ${trained_word}`;
   const proxy_note = is_proxy
     ? ` (запрошенный горизонт ${horizon_word} обслуживает та же модель, обученная на ${trained_word})`
     : '';
@@ -275,24 +292,39 @@ function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
     ? `На обучении такое событие случалось в ${Math.round(pos_rate * 100)}% случаев, адаптивный порог модели ${adaptive.toFixed(2)}.`
     : `Адаптивный порог модели ${adaptive.toFixed(2)}.`;
 
-  let verdict, verdictColor, headline;
-  if (prob_up >= adaptive + VERDICT_MARGIN) {
-    verdict = 'Повышенная вероятность';
-    verdictColor = 'success';
-    headline = `Сигнал сильнее базового — модель оценивает шанс ${target_phrase} выше обычного.`;
-  } else if (prob_up <= adaptive - VERDICT_MARGIN) {
-    verdict = 'Низкая вероятность';
-    verdictColor = 'danger';
-    headline = `Сигнал слабее базового — модель оценивает шанс ${target_phrase} ниже обычного. Это не означает падение цены.`;
-  } else {
-    verdict = 'Нейтральный сигнал';
-    verdictColor = 'warning';
-    headline = `Сигнал близок к базовому уровню — модель оценивает шанс ${target_phrase} примерно как в среднем по обучению.`;
-  }
+  const sig = classifySignal(prob_up, adaptive);
+  const deviation_pp = sig.score * 100;
+  const deviation_str = (deviation_pp >= 0 ? '+' : '') + deviation_pp.toFixed(1) + ' п.п.';
+
+  const headline = (function () {
+    switch (sig.key) {
+      case 'strong-up':
+        return `Сильно выше нормы — модель оценивает шанс ${target_phrase_inf} заметно выше обычного (${deviation_str} к адаптивному порогу).`;
+      case 'up':
+        return `Выше нормы — модель видит повышенный шанс ${target_phrase_inf} (${deviation_str} к адаптивному порогу).`;
+      case 'neutral':
+        return `Нейтрально — шанс ${target_phrase_inf} близок к историческому базовому уровню (${deviation_str} от порога).`;
+      case 'down':
+        return `Ниже нормы — модель оценивает шанс ${target_phrase_inf} ниже базового (${deviation_str} к порогу). Это не предсказание падения цены.`;
+      case 'strong-down':
+        return `Сильно ниже нормы — модель оценивает шанс ${target_phrase_inf} заметно ниже базового (${deviation_str} к порогу). Это не предсказание падения цены.`;
+    }
+  })();
+
   const explanation =
     `Модель TCN оценивает вероятность того, что ${name} ${target_phrase}, в ${prob_pct}%${proxy_note}. ` +
-    `${base_note} Сектор «${sectorLabel}». Прогноз не предсказывает падение цены — только превышение указанного порога роста.`;
-  return { verdict, verdictColor, explanation, headline, prob_pct };
+    `${base_note} Отклонение от порога: ${deviation_str}. Сектор «${sectorLabel}». ` +
+    `Прогноз не предсказывает падение цены — только превышение порога роста.`;
+
+  return {
+    verdict: sig.label,
+    verdictColor: sig.key,
+    explanation,
+    headline,
+    prob_pct,
+    signalScore: sig.score,
+    signalKey: sig.key,
+  };
 }
 
 async function fetchForecast(ticker, horizon, company) {
@@ -329,6 +361,13 @@ async function fetchForecast(ticker, horizon, company) {
   const out = TCN.predict(fres.matrix, horizon);
   // Clamp probabilities away from 0/1 to avoid 0% / 100% labels.
   const prob_up = Math.min(1 - 1e-6, Math.max(1e-6, out.prob_up));
+
+  /* Seed the ranking cache so buildRanking() doesn't re-fetch this same ticker. */
+  try {
+    const cacheKey = `tcn_rank_v1_${ticker}_${out.group}`;
+    _rankingMem[cacheKey] = prob_up;
+    localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), prob_up }));
+  } catch (_) {}
 
   const last_close = data.price.close[data.price.close.length - 1];
   const last_date = isoDate(data.price.dates[data.price.dates.length - 1]);
@@ -391,8 +430,101 @@ async function fetchForecast(ticker, horizon, company) {
     posRate: out.pos_rate,
     adaptiveThreshold: out.adaptive_threshold,
     threshold: out.threshold,
+    signalScore: v.signalScore,
+    signalKey: v.signalKey,
     barsUsed: fres.matrix.length,
   };
+}
+
+/* Lightweight predict for ranking — only needs prob_up and signalScore.
+   Used by the Top-5 rating across all companies. Reuses the same
+   feature pipeline and model weights. Caches per-ticker raw output in
+   localStorage with a 1-hour TTL to avoid hammering MOEX. */
+const RANKING_TTL_MS = 60 * 60 * 1000;
+const _rankingMem = {};
+async function predictForRanking(ticker, horizon) {
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+  const cacheKey = `tcn_rank_v1_${ticker}_${group}`;
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const { ts, prob_up } = JSON.parse(raw);
+      if (Date.now() - ts < RANKING_TTL_MS && typeof prob_up === 'number') {
+        _rankingMem[cacheKey] = prob_up;
+        return { prob_up, group };
+      }
+    }
+  } catch (_) {}
+  if (_rankingMem[cacheKey] != null) {
+    return { prob_up: _rankingMem[cacheKey], group };
+  }
+  await ensureGroup(group);
+  const data = await TCN.fetchAllForTicker(ticker);
+  if (!data.price.dates || data.price.dates.length < 60) {
+    throw new Error(`мало истории по ${ticker}`);
+  }
+  const fres = TCN.buildFeatures({
+    dates: data.price.dates,
+    close: data.price.close,
+    high:  data.price.high,
+    low:   data.price.low,
+    volume: data.price.volume,
+    usd:   null,
+    imoex: data.imoex.dates.length ? data.imoex : null,
+    div:   data.divs.dates.length  ? data.divs  : null,
+  });
+  if (fres.matrix.length < TCN.SEQ_LEN) {
+    throw new Error(`недостаточно фичей для ${ticker}`);
+  }
+  const out = TCN.predict(fres.matrix, horizon);
+  const prob_up = Math.min(1 - 1e-6, Math.max(1e-6, out.prob_up));
+  _rankingMem[cacheKey] = prob_up;
+  try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), prob_up })); } catch (_) {}
+  return { prob_up, group };
+}
+
+/* Build the full ranking for all companies for a given horizon.
+   Runs in parallel batches to keep UI responsive. Returns an array
+   sorted by signal_score desc, with absent tickers omitted. */
+async function buildRanking(horizon, companies, onProgress) {
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+  const adaptive = meta.horizon_groups[group].adaptive_threshold;
+  const pos_rate = meta.horizon_groups[group].pos_rate;
+  const thr = meta.horizon_groups[group].thr;
+
+  const BATCH = 5;
+  const result = [];
+  let done = 0;
+  for (let i = 0; i < companies.length; i += BATCH) {
+    const slice = companies.slice(i, i + BATCH);
+    const settled = await Promise.allSettled(
+      slice.map(c => predictForRanking(c.ticker, horizon).then(r => ({ company: c, prob_up: r.prob_up })))
+    );
+    for (const s of settled) {
+      if (s.status === 'fulfilled') {
+        const { company, prob_up } = s.value;
+        const score = prob_up - adaptive;
+        const sig = classifySignal(prob_up, adaptive);
+        result.push({
+          ticker: company.ticker,
+          name: company.name,
+          sector: company.sector,
+          prob_up,
+          prob_pct: Math.round(prob_up * 100),
+          score,
+          deviation_pp: score * 100,
+          signalKey: sig.key,
+          signalLabel: sig.label,
+        });
+      }
+    }
+    done += slice.length;
+    if (onProgress) onProgress(Math.min(done, companies.length), companies.length);
+  }
+  result.sort((a, b) => b.score - a.score);
+  return { ranking: result, group, adaptive, pos_rate, thr };
 }
 
 /* ── MINI CHART ───────────────────────────────────────────────── */
@@ -743,6 +875,120 @@ function AnimCounter({target}) {
   return <>{val}</>;
 }
 
+/* ── ANALYTICS PRIMITIVES ─────────────────────────────────────── */
+function AnalyticsMetric({label, value, hint, valueColor}) {
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}>
+      <div style={{fontSize:10,letterSpacing:'0.06em',fontWeight:600,color:'rgba(255,255,255,0.42)'}}>{(label||'').toUpperCase()}</div>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:18,color:valueColor||'#f1f5f9',letterSpacing:'-0.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{value}</div>
+      {hint && <div style={{fontSize:11,color:'rgba(255,255,255,0.32)'}}>{hint}</div>}
+    </div>
+  );
+}
+
+const RANK_PILLS = {
+  'strong-up':  {label:'Сильно выше нормы',  bg:'rgba(34,197,94,0.16)',  color:'#4ade80'},
+  'up':         {label:'Выше нормы',          bg:'rgba(34,197,94,0.08)',  color:'#86efac'},
+  'neutral':    {label:'Нейтрально',          bg:'rgba(234,179,8,0.10)',  color:'#facc15'},
+  'down':       {label:'Ниже нормы',          bg:'rgba(249,115,22,0.10)', color:'#fb923c'},
+  'strong-down':{label:'Сильно ниже нормы',   bg:'rgba(239,68,68,0.14)',  color:'#f87171'},
+};
+
+function RankingRow({row, rank, highlighted}) {
+  const pill = RANK_PILLS[row.signalKey];
+  const dev = (row.deviation_pp >= 0 ? '+' : '') + row.deviation_pp.toFixed(1);
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'40px 1fr auto auto',
+      alignItems:'center',gap:14,
+      padding:'10px 14px',borderRadius:12,
+      background: highlighted ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.03)',
+      border:`1px solid ${highlighted ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.06)'}`,
+    }}>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'rgba(255,255,255,0.45)'}}>#{rank}</div>
+      <div style={{minWidth:0}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9'}}>{row.ticker}</span>
+          <span style={{
+            padding:'2px 8px',borderRadius:99,fontSize:10,fontWeight:700,letterSpacing:'0.04em',
+            background:pill.bg,color:pill.color,
+          }}>{pill.label}</span>
+        </div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{row.name}</div>
+      </div>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9',textAlign:'right'}}>{row.prob_pct}%</div>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:13,color:pill.color,textAlign:'right',minWidth:60}}>{dev} п.п.</div>
+    </div>
+  );
+}
+
+function RankingPanel({ranking, group, adaptive, posRate, thrPct, currentTicker, progress, error, horizonLabel}) {
+  if (error) {
+    return (
+      <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginTop:16,background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)'}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#f87171',marginBottom:6}}>Рейтинг не построен</div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.5)'}}>{error}</div>
+      </div>
+    );
+  }
+  if (!ranking || ranking.length === 0) {
+    const pct = progress ? Math.round((progress.done/progress.total)*100) : 0;
+    return (
+      <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginTop:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:'rgba(255,255,255,0.7)',marginBottom:8}}>Строим рейтинг по всем компаниям…</div>
+        <div style={{height:6,borderRadius:99,background:'rgba(255,255,255,0.06)',overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${pct}%`,background:'linear-gradient(to right,#7c3aed,#06b6d4)',transition:'width 0.3s'}}/>
+        </div>
+        {progress && (
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:6,fontFamily:'JetBrains Mono'}}>{progress.done} / {progress.total} тикеров</div>
+        )}
+      </div>
+    );
+  }
+  const top = ranking.slice(0, 5);
+  const bottom = ranking.slice(-5).slice().reverse();
+  const currentRank = ranking.findIndex(r => r.ticker === currentTicker);
+  const total = ranking.length;
+  return (
+    <div className="glass" style={{borderRadius:16,padding:'24px',marginTop:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:12,flexWrap:'wrap',marginBottom:16}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:'#f1f5f9'}}>Рейтинг компаний по силе сигнала</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:3}}>
+            {horizonLabel} · {total} тикеров · база {Math.round(posRate*100)}% · порог {adaptive.toFixed(2)} · цель ≥ +{Math.round(thrPct*100)}%
+          </div>
+        </div>
+        {currentRank >= 0 && (
+          <div style={{
+            padding:'6px 12px',borderRadius:99,fontSize:12,fontWeight:700,
+            background:'rgba(124,58,237,0.18)',color:'#c4b5fd',border:'1px solid rgba(124,58,237,0.4)',
+            fontFamily:'JetBrains Mono',
+          }}>{currentTicker}: место {currentRank+1} из {total}</div>
+        )}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr',gap:24}}>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#86efac',marginBottom:10}}>ТОП-5 ПОЛОЖИТЕЛЬНЫХ СИГНАЛОВ</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {top.map((r,i)=>(
+              <RankingRow key={r.ticker} row={r} rank={i+1} highlighted={r.ticker===currentTicker}/>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#fb923c',marginBottom:10}}>ТОП-5 СЛАБЫХ СИГНАЛОВ</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {bottom.map((r,i)=>(
+              <RankingRow key={r.ticker} row={r} rank={total-i} highlighted={r.ticker===currentTicker}/>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── FORECAST ─────────────────────────────────────────────────── */
 function Forecast({company}) {
   const [horizon, setHorizon] = useState(DEFAULT_HORIZON);
@@ -751,13 +997,19 @@ function Forecast({company}) {
   const [error,setError] = useState(null);
   const [loadMsg,setLoadMsg] = useState(0);
   const [showDetail,setShowDetail] = useState(false);
+  const [ranking,setRanking] = useState(null);
+  const [rankingMeta,setRankingMeta] = useState(null);
+  const [rankingError,setRankingError] = useState(null);
+  const [rankingProgress,setRankingProgress] = useState(null);
   const loadRef = useRef(null);
+  const rankingRunRef = useRef(0);
 
   useEffect(()=>{ setResult(null); setShowDetail(false); setError(null); setHorizon(DEFAULT_HORIZON); },[company]);
-  useEffect(()=>{ setResult(null); setError(null); },[horizon]);
+  useEffect(()=>{ setResult(null); setError(null); setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null); },[horizon]);
 
   const doForecast = async () => {
     setLoading(true); setResult(null); setShowDetail(false); setLoadMsg(0); setError(null);
+    setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null);
     let i=0;
     loadRef.current = setInterval(()=>{
       i++; setLoadMsg(i%LOADING_MSGS.length);
@@ -778,8 +1030,31 @@ function Forecast({company}) {
     setLoading(false);
     if (apiError) {
       setError(apiError.message || String(apiError));
-    } else {
-      setResult(apiResult);
+      return;
+    }
+    setResult(apiResult);
+
+    /* Kick off ranking build in the background. We use a run-id so
+       stale results from a previous horizon/company never overwrite the
+       current view. The selected ticker is always pre-seeded into the
+       cache from the main forecast above (same group). */
+    const runId = ++rankingRunRef.current;
+    setRankingProgress({done: 0, total: COMPANIES.length});
+    try {
+      const r = await buildRanking(horizon, COMPANIES, (done, total) => {
+        if (rankingRunRef.current !== runId) return;
+        setRankingProgress({done, total});
+      });
+      if (rankingRunRef.current !== runId) return;
+      setRanking(r.ranking);
+      setRankingMeta({group: r.group, adaptive: r.adaptive, posRate: r.pos_rate, thr: r.thr});
+      const idx = r.ranking.findIndex(x => x.ticker === company.ticker);
+      if (idx >= 0) {
+        setResult(prev => prev ? ({...prev, rankPosition: idx+1, rankTotal: r.ranking.length}) : prev);
+      }
+    } catch (e) {
+      if (rankingRunRef.current !== runId) return;
+      setRankingError(e.message || String(e));
     }
   };
 
@@ -792,6 +1067,13 @@ function Forecast({company}) {
   const isDayUp = dayChange >= 0;
 
   const verdictStyles = {
+    /* 5-level signal-strength palette (signal_score = prob - adaptive_threshold) */
+    'strong-up':  {bg:'rgba(34,197,94,0.16)', border:'rgba(34,197,94,0.40)', color:'#4ade80'},
+    'up':         {bg:'rgba(34,197,94,0.08)', border:'rgba(34,197,94,0.22)', color:'#86efac'},
+    'neutral':    {bg:'rgba(234,179,8,0.10)', border:'rgba(234,179,8,0.25)', color:'#facc15'},
+    'down':       {bg:'rgba(249,115,22,0.10)',border:'rgba(249,115,22,0.25)',color:'#fb923c'},
+    'strong-down':{bg:'rgba(239,68,68,0.14)', border:'rgba(239,68,68,0.32)', color:'#f87171'},
+    /* Legacy 3-state aliases (kept for backward-compat with any cached state) */
     success:{bg:'rgba(34,197,94,0.1)',border:'rgba(34,197,94,0.25)',color:'#4ade80'},
     danger: {bg:'rgba(239,68,68,0.1)',border:'rgba(239,68,68,0.25)',color:'#f87171'},
     warning:{bg:'rgba(234,179,8,0.1)',border:'rgba(234,179,8,0.25)',color:'#facc15'},
@@ -951,8 +1233,50 @@ function Forecast({company}) {
                 <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',marginTop:10,maxWidth:520,marginLeft:'auto',marginRight:'auto',lineHeight:1.5}}>{result.headline}</div>
               )}
               {result.posRate != null && result.adaptiveThreshold != null && (
-                <div style={{marginTop:12,fontSize:11,color:'rgba(255,255,255,0.32)',fontFamily:'JetBrains Mono',letterSpacing:'0.04em'}}>
-                  базовая частота {Math.round(result.posRate*100)}% · адаптивный порог {result.adaptiveThreshold.toFixed(2)} · вы сейчас на {(result.prob/100).toFixed(2)}
+                <div style={{
+                  marginTop:18,padding:'14px 16px',borderRadius:12,
+                  background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',
+                  display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'10px 18px',
+                  textAlign:'left',
+                }}>
+                  <AnalyticsMetric
+                    label="Вероятность события"
+                    value={`${result.prob}%`}
+                    hint={`P(рост ≥ +${Math.round(result.threshold*100)}%)`}
+                    valueColor="#f1f5f9"
+                  />
+                  <AnalyticsMetric
+                    label="Базовая частота"
+                    value={`${Math.round(result.posRate*100)}%`}
+                    hint="на обучающей выборке"
+                    valueColor="rgba(255,255,255,0.85)"
+                  />
+                  <AnalyticsMetric
+                    label="Адаптивный порог"
+                    value={result.adaptiveThreshold.toFixed(3)}
+                    hint="p70 валидации"
+                    valueColor="rgba(255,255,255,0.85)"
+                  />
+                  <AnalyticsMetric
+                    label="Отклонение от порога"
+                    value={(result.signalScore >= 0 ? '+' : '') + (result.signalScore*100).toFixed(1) + ' п.п.'}
+                    hint="prob − adaptive"
+                    valueColor={verdictStyles[result.verdictColor].color}
+                  />
+                  <AnalyticsMetric
+                    label="Сила сигнала"
+                    value={result.verdict}
+                    hint="5 уровней"
+                    valueColor={verdictStyles[result.verdictColor].color}
+                  />
+                  {result.rankPosition && (
+                    <AnalyticsMetric
+                      label="Место в рейтинге"
+                      value={`${result.rankPosition} / ${result.rankTotal}`}
+                      hint="по силе сигнала"
+                      valueColor="rgba(255,255,255,0.85)"
+                    />
+                  )}
                 </div>
               )}
               {/* Price projection */}
@@ -979,8 +1303,21 @@ function Forecast({company}) {
               )}
             </div>
 
+            {/* Ranking — top-5 strongest / weakest signals across all companies */}
+            <RankingPanel
+              ranking={ranking}
+              group={rankingMeta?.group}
+              adaptive={rankingMeta?.adaptive ?? result.adaptiveThreshold}
+              posRate={rankingMeta?.posRate ?? result.posRate}
+              thrPct={rankingMeta?.thr ?? result.threshold}
+              currentTicker={company.ticker}
+              progress={rankingProgress}
+              error={rankingError}
+              horizonLabel={`${result.groupLabel} (модель ${result.trainedOn} дн.)`}
+            />
+
             {/* Explanation */}
-            <div className="glass" style={{borderRadius:16,padding:'24px',marginBottom:16}}>
+            <div className="glass" style={{borderRadius:16,padding:'24px',marginBottom:16,marginTop:16}}>
               <p style={{fontSize:15,color:'rgba(255,255,255,0.7)',lineHeight:1.65,fontWeight:400}}>{result.explanation}</p>
             </div>
 
