@@ -706,20 +706,22 @@
     const imoex_lr1 = lastFeat[22];
 
     const clip = v => Math.min(100, Math.max(0, v | 0));
+    /* Human-readable labels for non-technical users (diploma audience).
+       "positive" means "this factor currently pushes the prediction UP". */
     return [
-      { key: 'volatility', label: 'Волатильность',         desc: 'уровень риска',
+      { key: 'volatility', label: 'Спокойствие рынка',     desc: 'резкость изменений цены',
         impact: clip(Math.abs(volatility) * 2000), positive: volatility < 0.025 },
-      { key: 'trend',      label: 'Тренд цены (5д)',        desc: 'направление движения',
+      { key: 'trend',      label: 'Направление цены',          desc: 'куда двигалась бумага недавно',
         impact: clip(Math.abs(logret_5) * 1000),    positive: logret_5 > 0 },
-      { key: 'volume',     label: 'Объём торгов',           desc: 'рыночная активность',
+      { key: 'volume',     label: 'Активность торгов',         desc: 'сколько сейчас её покупают',
         impact: clip(Math.abs(vol_rel - 1.0) * 120), positive: vol_rel > 1.0 },
-      { key: 'dividend',   label: 'Дивидендная доходность', desc: 'TTM',
+      { key: 'dividend',   label: 'Дивиденды за год',         desc: 'выплаты акционерам',
         impact: clip(div_yield * 600),               positive: div_yield > 0.04 },
-      { key: 'imoex',      label: 'Рынок (IMOEX, 1д)',      desc: 'фон рынка',
+      { key: 'imoex',      label: 'Общий фон рынка',          desc: 'как идёт весь рынок (IMOEX)',
         impact: clip(Math.abs(imoex_lr1) * 5000),    positive: imoex_lr1 > 0 },
-      { key: 'usd',        label: 'Курс USD/RUB (1д)',      desc: 'валютный фактор',
+      { key: 'usd',        label: 'Курс рубля',                 desc: 'изменение USD/RUB',
         impact: clip(Math.abs(usd_lr1) * 5000),      positive: usd_lr1 < 0 },
-      { key: 'rsi',        label: 'RSI (14)',               desc: 'импульс',
+      { key: 'rsi',        label: 'Импульс цены',              desc: 'перекупленность / перепроданность',
         impact: clip(Math.abs(rsi - 50) * 2),        positive: rsi > 30 && rsi < 70 },
     ];
   }

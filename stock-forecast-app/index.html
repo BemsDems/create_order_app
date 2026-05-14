@@ -175,6 +175,25 @@ const DEFAULT_HORIZON = 5;
 function horizonGroup(h) {
   return HORIZON_GROUPS.find(g => g.horizons.includes(h)) || HORIZON_GROUPS[0];
 }
+/* Trading days → calendar-day phrase, in everyday Russian.
+   5 trading days ≈ 1 week, 30 ≈ 1.5 months, 120 ≈ 6 months. */
+function humanHorizon(tradingDays) {
+  const calDays = Math.round(tradingDays * 7 / 5);
+  if (tradingDays <= 5)   return 'неделю';
+  if (tradingDays <= 10)  return 'две недели';
+  if (tradingDays <= 30)  return 'полтора месяца';
+  if (tradingDays <= 60)  return 'три месяца';
+  if (tradingDays <= 120) return 'полгода';
+  if (tradingDays <= 240) return 'год';
+  return 'полтора года';
+}
+const RU_MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function fmtRuDate(iso) {
+  if (!iso) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${parseInt(m[3],10)} ${RU_MONTHS[parseInt(m[2],10)-1]} ${m[1]}`;
+}
 
 /* ── BASE PRICES (правдоподобные цены в рублях) ──────────────── */
 const BASE_PRICES = {
@@ -343,11 +362,15 @@ function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
 
   const plain = PLAIN_TEXTS[sig.key];
   const base_pct = (pos_rate != null) ? Math.round(pos_rate * 100) : null;
-  /* compareLine: plain-Russian "18 из 100 случаев, обычно — 21 из 100".
-     We deliberately avoid "п.п." / "adaptive threshold" here. */
+  const cal_phrase = humanHorizon(out.trained_on);
+  /* compareLine: plain-Russian "X из 100 случаев, обычно — Y из 100".
+     Calendar-day phrasing (e.g. "за полтора месяца"), no "≥", no "trading days". */
   const compareLine = (base_pct != null)
-    ? `Сейчас модель оценивает шанс в ${prob_pct} из 100 случаев. Обычно для такой акции на сроке ${trained_word} это случается в ${base_pct} из 100 случаев.`
+    ? `Сейчас модель оценивает шанс в ${prob_pct} из 100 случаев. Обычно для такой акции за ${cal_phrase} это случается в ${base_pct} из 100 случаев.`
     : `Сейчас модель оценивает шанс в ${prob_pct} из 100 случаев.`;
+  /* plainCaption: replaces the ≥/trading-days line under the big probability. */
+  const plainCaption =
+    `шанс, что цена вырастет хотя бы на ${thr_pct}% за ближайшие ${cal_phrase}`;
 
   return {
     verdict: sig.label,
@@ -357,6 +380,7 @@ function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
     plainShort: plain.short,
     plainBody:  plain.body,
     plainCompare: compareLine,
+    plainCaption,
     prob_pct,
     signalScore: sig.score,
     signalKey: sig.key,
@@ -454,6 +478,7 @@ async function fetchForecast(ticker, horizon, company) {
     plainShort: v.plainShort,
     plainBody: v.plainBody,
     plainCompare: v.plainCompare,
+    plainCaption: v.plainCaption,
     currentPrice: last_close,
     projectedPrice: projected_price,
     projPctStr: '+' + expected_upside_pct.toFixed(2) + '%',
@@ -935,11 +960,10 @@ const RANK_PILLS = {
 
 function RankingRow({row, rank, highlighted}) {
   const pill = RANK_PILLS[row.signalKey];
-  const dev = (row.deviation_pp >= 0 ? '+' : '') + row.deviation_pp.toFixed(1);
   return (
     <div style={{
       display:'grid',
-      gridTemplateColumns:'40px 1fr auto auto',
+      gridTemplateColumns:'40px 1fr auto',
       alignItems:'center',gap:14,
       padding:'10px 14px',borderRadius:12,
       background: highlighted ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.03)',
@@ -956,8 +980,10 @@ function RankingRow({row, rank, highlighted}) {
         </div>
         <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{row.name}</div>
       </div>
-      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9',textAlign:'right'}}>{row.prob_pct}%</div>
-      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:13,color:pill.color,textAlign:'right',minWidth:60}}>{dev} п.п.</div>
+      {/* Single right-hand column: probability "X%". The colored level pill
+          above already conveys "заметно выше / чуть ниже", so we drop
+          the "+X.X п.п." jargon column. */}
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:pill.color,textAlign:'right'}}>{row.prob_pct}%</div>
     </div>
   );
 }
@@ -995,9 +1021,9 @@ function RankingPanel({ranking, group, adaptive, posRate, thrPct, currentTicker,
     <div className="glass" style={{borderRadius:16,padding:'24px',marginTop:16}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:12,flexWrap:'wrap',marginBottom:16}}>
         <div>
-          <div style={{fontSize:15,fontWeight:700,color:'#f1f5f9'}}>Рейтинг компаний по силе сигнала</div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:3}}>
-            {horizonLabel} · {total} из {universe} компаний · база {Math.round(posRate*100)}% · порог {adaptive.toFixed(2)} · цель ≥ +{Math.round(thrPct*100)}%
+          <div style={{fontSize:15,fontWeight:700,color:'#f1f5f9'}}>Сравнение компаний</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',marginTop:3}}>
+            {horizonLabel} · {total} из {universe} компаний
           </div>
           {excluded > 0 && (
             <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4,fontStyle:'italic'}}>
@@ -1010,12 +1036,12 @@ function RankingPanel({ranking, group, adaptive, posRate, thrPct, currentTicker,
             padding:'6px 12px',borderRadius:99,fontSize:12,fontWeight:700,
             background:'rgba(124,58,237,0.18)',color:'#c4b5fd',border:'1px solid rgba(124,58,237,0.4)',
             fontFamily:'JetBrains Mono',
-          }}>{currentTicker}: место {currentRank+1} из {total} компаний с доступными данными</div>
+          }}>{currentTicker}: место {currentRank+1} из {total}</div>
         )}
       </div>
       <div style={{display:'grid',gridTemplateColumns:'1fr',gap:24}}>
         <div>
-          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#86efac',marginBottom:10}}>КОМПАНИИ С НАИБОЛЬШЕЙ СИЛОЙ СИГНАЛА</div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#86efac',marginBottom:10}}>У КАКИХ АКЦИЙ ШАНС РОСТА ВЫШЕ ОБЫЧНОГО</div>
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
             {top.map((r,i)=>(
               <RankingRow key={r.ticker} row={r} rank={i+1} highlighted={r.ticker===currentTicker}/>
@@ -1023,7 +1049,7 @@ function RankingPanel({ranking, group, adaptive, posRate, thrPct, currentTicker,
           </div>
         </div>
         <div>
-          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#fb923c',marginBottom:10}}>КОМПАНИИ С НАИМЕНЬШЕЙ СИЛОЙ СИГНАЛА</div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#fb923c',marginBottom:10}}>У КАКИХ АКЦИЙ ШАНС РОСТА НИЖЕ ОБЫЧНОГО</div>
           <div style={{display:'flex',flexDirection:'column',gap:8}}>
             {bottom.map((r,i)=>(
               <RankingRow key={r.ticker} row={r} rank={total-i} highlighted={r.ticker===currentTicker}/>
@@ -1042,7 +1068,6 @@ function Forecast({company}) {
   const [result,setResult] = useState(null);
   const [error,setError] = useState(null);
   const [loadMsg,setLoadMsg] = useState(0);
-  const [showDetail,setShowDetail] = useState(false);
   const [showAnalytics,setShowAnalytics] = useState(false);
   const [ranking,setRanking] = useState(null);
   const [rankingMeta,setRankingMeta] = useState(null);
@@ -1051,11 +1076,11 @@ function Forecast({company}) {
   const loadRef = useRef(null);
   const rankingRunRef = useRef(0);
 
-  useEffect(()=>{ setResult(null); setShowDetail(false); setShowAnalytics(false); setError(null); setHorizon(DEFAULT_HORIZON); },[company]);
+  useEffect(()=>{ setResult(null); setShowAnalytics(false); setError(null); setHorizon(DEFAULT_HORIZON); },[company]);
   useEffect(()=>{ setResult(null); setError(null); setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null); },[horizon]);
 
   const doForecast = async () => {
-    setLoading(true); setResult(null); setShowDetail(false); setShowAnalytics(false); setLoadMsg(0); setError(null);
+    setLoading(true); setResult(null); setShowAnalytics(false); setLoadMsg(0); setError(null);
     setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null);
     let i=0;
     loadRef.current = setInterval(()=>{
@@ -1275,12 +1300,17 @@ function Forecast({company}) {
                 </span>
                 <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
               </div>
-              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',marginBottom:0}}>
-                шанс роста ≥ +{Math.round((result.threshold||horizonGroup(horizon).thrPct/100)*100)}% за {result.trainedOn||horizon} торговых дней
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.55)',marginBottom:10,maxWidth:520,marginLeft:'auto',marginRight:'auto'}}>
+                {result.plainCaption}
+              </div>
+
+              {/* Key disclaimer — surfaced HIGH, not buried in a paragraph. */}
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:0,fontStyle:'italic'}}>
+                Это шанс роста, а не предсказание падения.
               </div>
 
               {/* PLAIN-LANGUAGE BLOCK — main result for a non-technical reader.
-                  No "п.п.", no "adaptive", no "P(...)". Big and prominent. */}
+                  No "п.п.", no "adaptive", no "P(...)". */}
               {result.plainShort && (
                 <div style={{
                   marginTop:24,padding:'20px 24px',borderRadius:14,
@@ -1309,8 +1339,8 @@ function Forecast({company}) {
               )}
 
               {result.lastBarDate && (
-                <div style={{marginTop:14,fontSize:11,color:'rgba(255,255,255,0.3)',fontFamily:'JetBrains Mono'}}>
-                  Данные обновлены: {result.lastBarDate}
+                <div style={{marginTop:14,fontSize:11,color:'rgba(255,255,255,0.35)'}}>
+                  Данные обновлены: {fmtRuDate(result.lastBarDate)}
                 </div>
               )}
 
@@ -1342,12 +1372,8 @@ function Forecast({company}) {
                       textAlign:'left',
                       animation:'fade-up 0.3s cubic-bezier(0.16,1,0.3,1) both',
                     }}>
-                      <AnalyticsMetric
-                        label="Вероятность события"
-                        value={`${result.prob}%`}
-                        hint={`P(рост ≥ +${Math.round(result.threshold*100)}%)`}
-                        valueColor="#f1f5f9"
-                      />
+                      {/* "Вероятность события" intentionally omitted — it is the
+                          big number already shown above, no need to repeat. */}
                       <AnalyticsMetric
                         label="Базовая частота"
                         value={`${Math.round(result.posRate*100)}%`}
@@ -1369,7 +1395,7 @@ function Forecast({company}) {
                       <AnalyticsMetric
                         label="Сила сигнала"
                         value={result.verdict}
-                        hint="5 уровней"
+                        hint="из 5 возможных"
                         valueColor={verdictStyles[result.verdictColor].color}
                       />
                       {result.rankPosition && (
@@ -1396,7 +1422,7 @@ function Forecast({company}) {
               currentTicker={company.ticker}
               progress={rankingProgress}
               error={rankingError}
-              horizonLabel={`${result.groupLabel} (модель ${result.trainedOn} дн.)`}
+              horizonLabel={`Срок: ближайшие ${humanHorizon(result.trainedOn)}`}
             />
 
             {/* Technical explanation — only when analytics is expanded,
@@ -1408,48 +1434,37 @@ function Forecast({company}) {
               </div>
             )}
 
-            {/* Confidence — plain-language framing of how far the signal is
-                from "neutral / business as usual". */}
-            <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginBottom:16}}>
-              <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
-                <div style={{minWidth:180}}>
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.06em',fontWeight:600,marginBottom:4}}>НАСКОЛЬКО ЯРКИЙ СИГНАЛ</div>
-                  <div style={{fontSize:18,fontWeight:700,color:'#f1f5f9',textTransform:'capitalize'}}>{result.confidence}</div>
+            {/* All technical content — confidence, factors, chart, AUC —
+                gated behind the SAME "Показать аналитику" toggle as the
+                analytics grid inside the verdict card. Single source of
+                truth so the public layout has no leaked jargon. */}
+            {showAnalytics && (
+              <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginBottom:16,marginTop:8,animation:'fade-up 0.3s cubic-bezier(0.16,1,0.3,1) both'}}>
+                <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+                  <div style={{minWidth:180}}>
+                    <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.06em',fontWeight:600,marginBottom:4}}>НАСКОЛЬКО ЯРКИЙ СИГНАЛ</div>
+                    <div style={{fontSize:18,fontWeight:700,color:'#f1f5f9',textTransform:'capitalize'}}>{result.confidence}</div>
+                  </div>
+                  <div style={{flex:1,minWidth:120}}>
+                    <ProgressBar value={result.confVal} color='linear-gradient(to right,#7c3aed,#06b6d4)' animated={true}/>
+                    <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:4,textAlign:'right'}}>{result.confVal}%</div>
+                  </div>
                 </div>
-                <div style={{flex:1,minWidth:120}}>
-                  <ProgressBar value={result.confVal} color='linear-gradient(to right,#7c3aed,#06b6d4)' animated={true}/>
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:4,textAlign:'right'}}>{result.confVal}%</div>
+                <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',marginTop:10,lineHeight:1.5}}>
+                  {result.confVal > 65
+                    ? 'Модель видит заметный сигнал — отклонение от обычной картины выраженное.'
+                    : (result.confVal > 35
+                      ? 'Сигнал есть, но он не категоричный — отклонение от обычной картины умеренное.'
+                      : 'Модель не видит сильного перевеса — текущая картина похожа на обычную для этой акции на таком сроке.')}
                 </div>
               </div>
-              <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',marginTop:10,lineHeight:1.5}}>
-                {result.confVal > 65
-                  ? 'Модель видит заметный сигнал — отклонение от обычной картины выраженное.'
-                  : (result.confVal > 35
-                    ? 'Сигнал есть, но он не категоричный — отклонение от обычной картины умеренное.'
-                    : 'Модель не видит сильного перевеса — текущая картина похожа на обычную для этой акции на таком сроке.')}
-              </div>
-            </div>
+            )}
 
-            {/* Detail toggle */}
-            <button onClick={()=>setShowDetail(v=>!v)}
-              style={{
-                width:'100%',padding:'13px',borderRadius:12,fontSize:14,fontWeight:600,cursor:'pointer',
-                fontFamily:'Manrope',
-                background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.1)',
-                color:'rgba(255,255,255,0.6)',transition:'all 0.2s',display:'flex',alignItems:'center',justifyContent:'center',gap:8,
-              }}
-              onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.08)';e.currentTarget.style.color='white'}}
-              onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.6)'}}>
-              <span>{showDetail?'Скрыть детали':'Подробнее'}</span>
-              <svg style={{transform:showDetail?'rotate(180deg)':'none',transition:'transform 0.3s'}} width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <polyline points="4,6 8,10 12,6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-
-            {/* Detail panel */}
-            {showDetail && (
+            {/* Factors + mini chart — same gate, no separate "Подробнее"
+                button. Cleaner two-layer split between public and analytics. */}
+            {showAnalytics && (
               <div className="glass" style={{borderRadius:16,padding:'28px',marginTop:8,animation:'fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both'}}>
-                <div style={{fontWeight:700,fontSize:15,color:'#f1f5f9',marginBottom:20}}>Ключевые факторы</div>
+                <div style={{fontWeight:700,fontSize:15,color:'#f1f5f9',marginBottom:20}}>Что повлияло на сигнал</div>
                 <div style={{display:'flex',flexDirection:'column',gap:14}}>
                   {result.factors.map(f=>(
                     <div key={f.key}>
@@ -1464,7 +1479,7 @@ function Forecast({company}) {
                           color:f.positive?'#4ade80':'#f87171',
                           border:`1px solid ${f.positive?'rgba(34,197,94,0.2)':'rgba(239,68,68,0.2)'}`,
                         }}>
-                          {f.positive?'▲ позитив':'▼ негатив'}
+                          {f.positive?'↑ толкает вверх':'↓ тянет вниз'}
                         </div>
                       </div>
                       <ProgressBar value={f.impact} color={f.positive?'rgba(34,197,94,0.7)':'rgba(239,68,68,0.7)'} animated={true}/>
