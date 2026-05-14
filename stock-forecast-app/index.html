@@ -971,14 +971,15 @@ function RankingRow({row, rank, highlighted}) {
     }}>
       <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'rgba(255,255,255,0.45)'}}>#{rank}</div>
       <div style={{minWidth:0}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-          <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9'}}>{row.ticker}</span>
-          <span style={{
-            padding:'2px 8px',borderRadius:99,fontSize:10,fontWeight:700,letterSpacing:'0.04em',
-            background:pill.bg,color:pill.color,
-          }}>{pill.label}</span>
+        <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9'}}>{row.ticker}</div>
+        {/* Single sub-line: "Название · уровень" — replaces the pill badge so
+            the row reads as one phrase, not as a tag + name. The level is
+            lower-cased and coloured to keep the visual hierarchy. */}
+        <div style={{fontSize:12,marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+          <span style={{color:'rgba(255,255,255,0.55)'}}>{row.name}</span>
+          <span style={{color:'rgba(255,255,255,0.35)'}}> · </span>
+          <span style={{color:pill.color,fontWeight:600}}>{pill.label.toLowerCase()}</span>
         </div>
-        <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{row.name}</div>
       </div>
       {/* Single right-hand column: probability "X%". The colored level pill
           above already conveys "заметно выше / чуть ниже", so we drop
@@ -1293,20 +1294,28 @@ function Forecast({company}) {
               <div style={{fontSize:'clamp(22px,5vw,36px)',fontWeight:800,color:verdictStyles[result.verdictColor].color,fontFamily:'Manrope',letterSpacing:'-0.02em',marginBottom:24}}>
                 {result.verdict}
               </div>
-              {/* Big probability */}
-              <div style={{display:'inline-flex',alignItems:'baseline',gap:4,marginBottom:8}}>
+              {/* Big probability — "X из 100" form. The "%" sign is replaced
+                  by a smaller "из 100" line so non-experts read it as a
+                  frequency, not a magic percent. */}
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginBottom:8}}>
                 <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:'clamp(52px,12vw,88px)',color:'#f1f5f9',letterSpacing:'-0.04em',lineHeight:1}}>
                   <AnimCounter target={result.prob}/>
                 </span>
-                <span style={{fontFamily:'JetBrains Mono',fontSize:28,color:'rgba(255,255,255,0.4)',fontWeight:600}}>%</span>
+                <span style={{fontFamily:'JetBrains Mono',fontSize:16,color:'rgba(255,255,255,0.45)',fontWeight:600,marginTop:4,letterSpacing:'0.04em'}}>
+                  из 100
+                </span>
               </div>
               <div style={{fontSize:14,color:'rgba(255,255,255,0.55)',marginBottom:10,maxWidth:520,marginLeft:'auto',marginRight:'auto'}}>
                 {result.plainCaption}
               </div>
 
-              {/* Key disclaimer — surfaced HIGH, not buried in a paragraph. */}
-              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:0,fontStyle:'italic'}}>
+              {/* Key disclaimers — surfaced HIGH, not buried in a paragraph.
+                  Two short lines: what the number IS, and what it ISN'T. */}
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:2,fontStyle:'italic'}}>
                 Это шанс роста, а не предсказание падения.
+              </div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',marginBottom:0,fontStyle:'italic',maxWidth:560,marginLeft:'auto',marginRight:'auto'}}>
+                Если модель говорит {result.prob}% — это не значит, что на {100 - result.prob}% цена упадёт.
               </div>
 
               {/* PLAIN-LANGUAGE BLOCK — main result for a non-technical reader.
