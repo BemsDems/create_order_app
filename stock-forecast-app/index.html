@@ -296,28 +296,15 @@ function classifySignal(prob_up, adaptive) {
 }
 
 /* Plain-language phrasing for non-technical users (diploma audience).
-   No "п.п.", no "adaptive threshold", no "P(...)" — just everyday Russian. */
+   One sentence per level — combines observation with comparison so we don't
+   repeat the same idea in two adjacent paragraphs. The colored level label
+   is already shown in the verdict heading above; no second heading here. */
 const PLAIN_TEXTS = {
-  'strong-up': {
-    short: 'Модель видит сильный сигнал к росту',
-    body:  'Шанс заметного роста на этом сроке сейчас существенно выше обычного для этой акции.',
-  },
-  'up': {
-    short: 'Лёгкий перевес в сторону роста',
-    body:  'Модель оценивает шанс роста чуть выше, чем в среднем у этой акции на таком сроке.',
-  },
-  'neutral': {
-    short: 'Обычная картина, без явных сигналов',
-    body:  'Модель не видит ничего особенного — шанс быстрого роста примерно такой же, как обычно у этой акции.',
-  },
-  'down': {
-    short: 'Сигналов к сильному росту сейчас меньше обычного',
-    body:  'Это не предсказание падения цены. Модель оценивает только шанс быстрого роста, и сейчас этот шанс ниже привычного для этой акции.',
-  },
-  'strong-down': {
-    short: 'Шансов на быстрый сильный рост сейчас почти нет',
-    body:  'Модель не видит признаков сильного роста на этом сроке. Это не значит, что цена упадёт — модель оценивает только шанс роста.',
-  },
+  'strong-up':   { body: 'Модель видит признаки сильного роста на этом сроке — шанс заметно выше обычного для этой акции.' },
+  'up':          { body: 'Модель видит лёгкий перевес в сторону роста — шанс чуть выше обычного для этой акции на таком сроке.' },
+  'neutral':     { body: 'Модель не видит ничего особенного — шанс быстрого роста примерно такой же, как обычно у этой акции.' },
+  'down':        { body: 'Сигналов к сильному росту сейчас меньше обычного. Это не предсказание падения — модель оценивает только шанс роста.' },
+  'strong-down': { body: 'Модель не видит признаков сильного роста на этом сроке — шанс заметно ниже обычного для этой акции. Это не значит, что цена упадёт.' },
 };
 function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
   const prob_pct = Math.round(prob_up * 100);
@@ -377,7 +364,6 @@ function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
     verdictColor: sig.key,
     explanation,
     headline,
-    plainShort: plain.short,
     plainBody:  plain.body,
     plainCompare: compareLine,
     plainCaption,
@@ -475,7 +461,6 @@ async function fetchForecast(ticker, horizon, company) {
     factors,
     explanation: v.explanation,
     headline: v.headline,
-    plainShort: v.plainShort,
     plainBody: v.plainBody,
     plainCompare: v.plainCompare,
     plainCaption: v.plainCaption,
@@ -1319,21 +1304,15 @@ function Forecast({company}) {
               </div>
 
               {/* PLAIN-LANGUAGE BLOCK — main result for a non-technical reader.
-                  No "п.п.", no "adaptive", no "P(...)". */}
-              {result.plainShort && (
+                  One unified sentence (no separate heading) plus a comparison
+                  line vs the historical base rate. No "п.п.", no "adaptive". */}
+              {result.plainBody && (
                 <div style={{
                   marginTop:24,padding:'20px 24px',borderRadius:14,
                   background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',
                   textAlign:'center',maxWidth:600,marginLeft:'auto',marginRight:'auto',
                 }}>
-                  <div style={{
-                    fontSize:'clamp(16px,2.4vw,20px)',fontWeight:700,
-                    color:verdictStyles[result.verdictColor].color,
-                    fontFamily:'Manrope',marginBottom:10,lineHeight:1.35,
-                  }}>
-                    {result.plainShort}
-                  </div>
-                  <div style={{fontSize:14,color:'rgba(255,255,255,0.75)',lineHeight:1.6,marginBottom:result.plainCompare?12:0}}>
+                  <div style={{fontSize:15,color:'rgba(255,255,255,0.85)',lineHeight:1.55,marginBottom:result.plainCompare?12:0}}>
                     {result.plainBody}
                   </div>
                   {result.plainCompare && (
@@ -1398,7 +1377,7 @@ function Forecast({company}) {
                       <AnalyticsMetric
                         label="Отклонение от порога"
                         value={(result.signalScore >= 0 ? '+' : '') + (result.signalScore*100).toFixed(1) + ' п.п.'}
-                        hint="prob − adaptive"
+                        hint="нейтральный сигнал — ±3 п.п."
                         valueColor={verdictStyles[result.verdictColor].color}
                       />
                       <AnalyticsMetric
