@@ -605,14 +605,50 @@
     return Date.UTC(y, m - 1, d);
   }
 
+  function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
+
+  /* Fetch a URL and parse JSON, retrying on transient errors. MOEX
+     occasionally returns truncated or HTML responses under heavy parallel
+     load — retry a few times with backoff before giving up. */
+  async function fetchJsonRetry(url, retries) {
+    if (retries == null) retries = 3;
+    let lastErr = null;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) {
+          lastErr = new Error('MOEX HTTP ' + r.status);
+          if (r.status === 429 || r.status >= 500) {
+            await sleep(400 * (attempt + 1));
+            continue;
+          }
+          throw lastErr;
+        }
+        const text = await r.text();
+        try {
+          return JSON.parse(text);
+        } catch (parseErr) {
+          lastErr = new Error('MOEX вернул некорректный ответ (попробуйте ещё раз)');
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+      } catch (netErr) {
+        lastErr = netErr;
+        if (attempt < retries) {
+          await sleep(400 * (attempt + 1));
+          continue;
+        }
+      }
+    }
+    throw lastErr || new Error('MOEX fetch failed: ' + url);
+  }
+
   async function fetchPaged(url, dataKey) {
     const out = [];
     let start = 0;
     while (true) {
       const sep = url.includes('?') ? '&' : '?';
-      const r = await fetch(url + sep + 'start=' + start);
-      if (!r.ok) throw new Error('MOEX fetch failed: ' + r.status + ' ' + url);
-      const j = await r.json();
+      const j = await fetchJsonRetry(url + sep + 'start=' + start);
       const rows = j[dataKey] && j[dataKey].data;
       if (!rows || rows.length === 0) break;
       out.push.apply(out, rows);
@@ -663,9 +699,12 @@
       '/securities/' + secid + '/dividends.json' +
       '?iss.meta=off&iss.only=dividends' +
       '&dividends.columns=secid,registryclosedate,value,currencyid';
-    const r = await fetch(url);
-    if (!r.ok) return { dates: [], values: [] };
-    const j = await r.json();
+    let j;
+    try {
+      j = await fetchJsonRetry(url, 2);
+    } catch (_) {
+      return { dates: [], values: [] };
+    }
     const rows = j.dividends && j.dividends.data;
     if (!rows) return { dates: [], values: [] };
     const dates = []; const values = [];
