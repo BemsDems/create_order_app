@@ -773,18 +773,90 @@
     mergeBackward: mergeBackward, ttmDivYield: ttmDivYield,
   };
 
+  // ---- Offline snapshot fallback ---------------------------------------
+  // If the static asset directory contains a prebuilt MOEX snapshot
+  // (assets/snapshot/_index.json, _imoex.json, {TICKER}.json), we can
+  // serve forecasts without internet. We try live MOEX first; on any
+  // failure we transparently fall back to the snapshot.
+  const SNAPSHOT_DIR = 'assets/snapshot';
+  let _snapshotIndexPromise = null;
+  const _snapshotTickerCache = {};
+  let _imoexSnapshotPromise = null;
+
+  function loadSnapshotIndex() {
+    if (_snapshotIndexPromise == null) {
+      _snapshotIndexPromise = fetch(SNAPSHOT_DIR + '/_index.json')
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+    }
+    return _snapshotIndexPromise;
+  }
+
+  function loadSnapshotImoex() {
+    if (_imoexSnapshotPromise == null) {
+      _imoexSnapshotPromise = fetch(SNAPSHOT_DIR + '/_imoex.json')
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null);
+    }
+    return _imoexSnapshotPromise;
+  }
+
+  async function loadSnapshotTicker(ticker) {
+    if (_snapshotTickerCache[ticker] !== undefined) {
+      return _snapshotTickerCache[ticker];
+    }
+    try {
+      const r = await fetch(SNAPSHOT_DIR + '/' + ticker + '.json');
+      if (!r.ok) {
+        _snapshotTickerCache[ticker] = null;
+        return null;
+      }
+      const j = await r.json();
+      _snapshotTickerCache[ticker] = j;
+      return j;
+    } catch (_) {
+      _snapshotTickerCache[ticker] = null;
+      return null;
+    }
+  }
+
+  TCN.getSnapshotInfo = async function () {
+    return await loadSnapshotIndex();
+  };
+
   TCN.fetchAllForTicker = async function (ticker) {
     // Need ~280 trading days (≈ 13 months) before the current date so SMA200
     // and 200-day rolling features have valid values for the most recent rows.
     const now = new Date();
     const till = isoDate(now);
     const from = isoDate(now.getTime() - 730 * ONE_DAY_MS); // 2 calendar years
-    const [price, imoex, divs] = await Promise.all([
-      TCN.fetchOHLCV(ticker, from, till),
-      TCN.fetchIMOEX(from, till),
-      TCN.fetchDividends(ticker),
-    ]);
-    return { price: price, imoex: imoex, divs: divs };
+    try {
+      const [price, imoex, divs] = await Promise.all([
+        TCN.fetchOHLCV(ticker, from, till),
+        TCN.fetchIMOEX(from, till),
+        TCN.fetchDividends(ticker),
+      ]);
+      if (!price.dates || price.dates.length < 60) {
+        throw new Error('insufficient live history for ' + ticker);
+      }
+      return { price: price, imoex: imoex, divs: divs, source: 'live' };
+    } catch (liveErr) {
+      const [snap, imoexSnap, idx] = await Promise.all([
+        loadSnapshotTicker(ticker),
+        loadSnapshotImoex(),
+        loadSnapshotIndex(),
+      ]);
+      if (snap && snap.price && imoexSnap) {
+        return {
+          price: snap.price,
+          imoex: imoexSnap,
+          divs: snap.divs || { dates: [], values: [] },
+          source: 'snapshot',
+          snapshotInfo: idx,
+        };
+      }
+      throw liveErr;
+    }
   };
 
   window.TCN = TCN;
