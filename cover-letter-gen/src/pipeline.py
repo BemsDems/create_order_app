@@ -16,10 +16,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from .analyzer import analyze
-from .facts import CanonicalFacts, extract_canonical_facts
+from .facts import CanonicalFacts, VacancyFit, extract_canonical_facts, vacancy_fit
 from .llm_client import LLMClient
 from .models import Profile, Vacancy
-from .validator import ValidationResult, validate_deterministic, validate_semantic
+from .validator import ValidationResult, Violation, validate_deterministic, validate_semantic
 from .writer import write_letter
 
 
@@ -80,6 +80,12 @@ class PipelineConfig:
     low_confidence_threshold: float = 0.5
     # Hard cutoff: below this we don't generate at all.
     skip_below_confidence: float = 0.2
+    # Pre-Analyzer fit gate: skip the vacancy if it doesn't mention any of
+    # the candidate's primary skills AND has fewer than this many tech-stack
+    # tokens in common with `facts.allowed_tech`.
+    min_tech_overlap: int = 1
+    # Pre-Analyzer fit gate toggle.
+    enforce_fit_gate: bool = True
 
 
 class CoverLetterPipeline:
@@ -106,6 +112,24 @@ class CoverLetterPipeline:
         )
 
     async def generate(self, vacancy: Vacancy) -> GenerationResult:
+        # Pre-Analyzer fit gate — skip vacancies with no tech overlap. Saves
+        # an LLM call AND avoids the model being tempted to invent matching
+        # experience (the previous root cause of unknown_tech_term failures).
+        if self.config.enforce_fit_gate:
+            fit = vacancy_fit(self.facts, vacancy, self.profile.skills_primary)
+            if not fit.primary_match and fit.overlap_count < self.config.min_tech_overlap:
+                logger.info(
+                    "Vacancy %s: no tech overlap (matched=%s) — skipping pre-Analyzer",
+                    vacancy.id, fit.matched_terms,
+                )
+                return _error_result(
+                    vacancy,
+                    error="skipped_no_tech_overlap",
+                    confidence_reason=(
+                        "вакансия не упоминает Flutter и не пересекается с tech-stack резюме"
+                    ),
+                )
+
         try:
             analyzer_json = await analyze(self.llm, vacancy, self.facts)
         except Exception as exc:  # noqa: BLE001
@@ -150,9 +174,12 @@ class CoverLetterPipeline:
             )
 
         feedback: Optional[str] = None
+        hard_constraints: List[str] = []
         last_letter: str = ""
         last_result: Optional[ValidationResult] = None
         semantic_used = False
+        # Set of (rule, evidence) tuples — used to detect repeat violations.
+        prev_violation_keys: set[tuple[str, str]] = set()
 
         for attempt in range(1, self.config.max_writer_retries + 2):
             try:
@@ -162,6 +189,7 @@ class CoverLetterPipeline:
                     facts=self.facts,
                     used_starts=self.used_starts,
                     feedback=feedback,
+                    hard_constraints=hard_constraints or None,
                     universal_mode=universal_mode,
                     temperature=self.config.writer_temperature,
                     max_tokens=self.config.writer_max_tokens,
@@ -189,6 +217,11 @@ class CoverLetterPipeline:
             )
             if not det.passed:
                 feedback = det.format_feedback()
+                # On repeated violations, escalate to hard_constraints so the
+                # next prompt has a much louder prohibition.
+                hard_constraints = _escalate_constraints(
+                    det.violations, prev_violation_keys, hard_constraints,
+                )
                 last_result = det
                 logger.info(
                     "Vacancy %s: attempt %d failed deterministic validation (%d violations)",
@@ -285,6 +318,55 @@ class CoverLetterPipeline:
                 return await self.generate(v)
 
         return await asyncio.gather(*(_one(v) for v in vacancies))
+
+
+def _escalate_constraints(
+    current_violations: List[Violation],
+    prev_keys: set[tuple[str, str]],
+    existing_hard: List[str],
+) -> List[str]:
+    """Convert repeated violations into hard-constraint lines for the next retry.
+
+    A violation that repeats with the same (rule, evidence) tuple is treated
+    as evidence that polite feedback isn't working — the next prompt gets a
+    loud, explicit prohibition. Mutates `prev_keys` to remember what we've
+    seen so far.
+    """
+    new_hard: List[str] = list(existing_hard)
+    seen_hard = {line.lower() for line in new_hard}
+    for v in current_violations:
+        key = (v.rule, v.evidence)
+        if key in prev_keys:
+            # Repeated violation — escalate.
+            line = _hard_line_for(v)
+            if line and line.lower() not in seen_hard:
+                new_hard.append(line)
+                seen_hard.add(line.lower())
+        prev_keys.add(key)
+    return new_hard
+
+
+def _hard_line_for(v: Violation) -> str:
+    """Map a violation to a short, loud prohibition line for the prompt."""
+    if v.rule == "meta_leak":
+        return f"НЕ пиши слово «{v.evidence}» — это служебная разметка, а не часть письма."
+    if v.rule == "anglicism":
+        return f"НЕ пиши слово «{v.evidence}» латиницей — оно не из списка разрешённых технологий."
+    if v.rule == "invented_number":
+        return f"НЕ используй число «{v.evidence}» — его нет в «Разрешённых числах»."
+    if v.rule == "forbidden_claim":
+        return f"НЕ упоминай «{v.evidence}» — этого нет в резюме."
+    if v.rule == "forbidden_phrase":
+        return f"НЕ используй фразу «{v.evidence}»."
+    if v.rule == "library_name":
+        return f"НЕ называй библиотеку «{v.evidence}» — пиши обобщённо (DI, HTTP-клиент, state management)."
+    if v.rule == "unknown_tech_term":
+        return f"НЕ упоминай «{v.evidence}» — этой технологии нет в моём опыте."
+    if v.rule == "too_long":
+        return "Письмо должно быть КОРОТКИМ — не больше одного-двух абзацев."
+    if v.rule == "wrong_paragraph_count":
+        return "Структура должна быть РОВНО такой, как просили в системном сообщении."
+    return ""
 
 
 def _error_result(

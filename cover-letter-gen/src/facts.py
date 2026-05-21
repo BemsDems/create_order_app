@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Set
 
-from .models import Profile, Project
+from .models import Profile, Project, Vacancy
 
 
 # Default smell-phrases — common hallucinations seen in cover letters.
@@ -177,3 +177,52 @@ def _dedup(items: List[str]) -> List[str]:
             seen.add(item)
             out.append(item)
     return out
+
+
+# Words tokenizer for the fit-gate (incl. cyrillic, latin, digits, '+/#').
+_FIT_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9+/#-]*", re.UNICODE)
+
+
+@dataclass
+class VacancyFit:
+    """Deterministic match between a vacancy and the profile.
+
+    overlap_count is the number of distinct allowed-tech tokens that appear
+    in the vacancy text. primary_match is true iff the profile's primary
+    skill (e.g. "Flutter") appears in the vacancy text.
+    """
+
+    overlap_count: int
+    primary_match: bool
+    matched_terms: List[str]
+
+
+def vacancy_fit(facts: CanonicalFacts, vacancy: Vacancy, primary_skills: List[str]) -> VacancyFit:
+    """Score the vacancy against the candidate's tech.
+
+    Used as a pre-Analyzer gate: if the vacancy doesn't mention even one of
+    the candidate's primary skills (Flutter, Dart, Mobile, ...), skip it
+    without an LLM call. Saves tokens AND avoids the model being tempted
+    to invent matching experience.
+    """
+    text_parts: List[str] = [vacancy.title or "", vacancy.description or ""]
+    text_parts.extend(vacancy.requirements or [])
+    text_parts.extend(vacancy.tags or [])
+    text = " ".join(p for p in text_parts if p)
+    tokens_lower = {m.group(0).lower() for m in _FIT_WORD_RE.finditer(text)}
+
+    matched: List[str] = []
+    matched_set: Set[str] = set()
+    for tech in facts.allowed_tech:
+        if tech.lower() in tokens_lower and tech.lower() not in matched_set:
+            matched.append(tech)
+            matched_set.add(tech.lower())
+
+    primary_lower = {s.lower() for s in primary_skills if s.strip()}
+    primary_match = bool(primary_lower & tokens_lower)
+
+    return VacancyFit(
+        overlap_count=len(matched),
+        primary_match=primary_match,
+        matched_terms=matched,
+    )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.facts import extract_canonical_facts
-from src.models import Position, Profile, Project
+from src.facts import extract_canonical_facts, vacancy_fit
+from src.models import Position, Profile, Project, Vacancy
 
 
 def _profile() -> Profile:
@@ -91,3 +91,46 @@ def test_default_forbidden_claims_used_when_none_passed():
     grounded = facts.forbidden_claims_grounded()
     assert "финтех" not in {g.lower() for g in grounded}
     assert "high-load" in grounded
+
+
+# ---------- v3 ----------
+
+
+def test_vacancy_fit_matches_primary_skill():
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v1",
+        title="Flutter Developer",
+        description="Looking for a Flutter dev with Dart experience.",
+    )
+    fit = vacancy_fit(facts, vac, _profile().skills_primary)
+    assert fit.primary_match is True
+    assert fit.overlap_count >= 1
+    assert "Flutter" in fit.matched_terms
+
+
+def test_vacancy_fit_skips_unrelated_backend_vacancy():
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v2",
+        title="Backend Go Engineer",
+        description="Looking for a Go backend developer with Kafka and Redis.",
+        requirements=["3+ years Go", "Kafka", "PostgreSQL", "Redis"],
+    )
+    fit = vacancy_fit(facts, vac, _profile().skills_primary)
+    # Profile has none of Go/Kafka/Redis → no primary match, no overlap.
+    assert fit.primary_match is False
+    assert fit.overlap_count == 0
+
+
+def test_vacancy_fit_uses_requirements_and_tags():
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v3",
+        title="Mobile dev",
+        description="Native mobile developer.",
+        requirements=["Опыт работы с Flutter обязателен"],
+        tags=["dart", "mobile"],
+    )
+    fit = vacancy_fit(facts, vac, _profile().skills_primary)
+    assert fit.primary_match is True

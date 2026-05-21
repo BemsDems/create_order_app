@@ -27,6 +27,18 @@ pipeline:
   # Analyzer.confidence < this → skip generation entirely.
   skip_below_confidence: 0.2
 
+  # Pre-Analyzer fit gate (v3). Saves tokens AND avoids the LLM being
+  # tempted to invent matching experience for unrelated vacancies (e.g.
+  # backend Go roles that don't mention Flutter at all).
+  #
+  # A vacancy is skipped pre-Analyzer iff:
+  #   primary_match == False  AND  overlap_count < min_tech_overlap
+  # where primary_match=True iff any of `skills_primary` from resume.yaml
+  # appears in the vacancy text. overlap_count = number of allowed_tech
+  # tokens found in the vacancy text.
+  enforce_fit_gate: true
+  min_tech_overlap: 1
+
 # Optional. Smell-phrases that must NOT appear in the letter unless they're
 # also present in the resume itself. Useful to block hallucinations like
 # "финтех" / "сотни пользователей" when your resume doesn't actually mention

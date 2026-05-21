@@ -89,6 +89,8 @@ async def amain() -> int:
         skip_below_confidence=float(
             pipeline_cfg_data.get("skip_below_confidence", 0.2)
         ),
+        min_tech_overlap=int(pipeline_cfg_data.get("min_tech_overlap", 1)),
+        enforce_fit_gate=bool(pipeline_cfg_data.get("enforce_fit_gate", True)),
     )
     max_concurrent = int(pipeline_cfg_data.get("max_concurrent", 5))
     forbidden_claims = settings_data.get("forbidden_claims")
@@ -122,8 +124,10 @@ async def amain() -> int:
     finally:
         await llm.close()
 
+    SKIP_ERRORS = {"skipped_low_confidence", "skipped_no_tech_overlap"}
     generated = 0
     failed = 0
+    skipped = 0
     summary = []
     for r in results:
         safe_company = re.sub(r"[^\w\-]+", "_", r.company or "unknown").strip("_") or "unknown"
@@ -133,6 +137,9 @@ async def amain() -> int:
             out_path.write_text(r.letter + signature, encoding="utf-8")
             generated += 1
             print(f"OK   {out_path.name}  ({r.word_count} words, attempts={r.attempts})")
+        elif r.error in SKIP_ERRORS:
+            skipped += 1
+            print(f"SKIP {safe_company} {r.vacancy_id[:8]}: {r.error}", file=sys.stderr)
         else:
             failed += 1
             print(
@@ -144,7 +151,10 @@ async def amain() -> int:
     (args.out / "_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"\nDone: {generated} generated, {failed} failed. Summary at {args.out / '_summary.json'}")
+    print(
+        f"\nDone: {generated} generated, {skipped} skipped, {failed} failed. "
+        f"Summary at {args.out / '_summary.json'}"
+    )
     return 0 if failed == 0 else 3
 
 

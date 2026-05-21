@@ -197,3 +197,60 @@ def test_universal_mode_allows_one_paragraph():
     )
     # The "wrong_paragraph_count" rule shouldn't fire in universal mode.
     assert not any(v.rule == "wrong_paragraph_count" for v in result.violations)
+
+
+# ---------- v3 rules ----------
+
+
+def test_meta_leak_term_is_flagged():
+    """Service words from the prompt (e.g. 'openers', 'achievements') leaking
+    into the letter must produce a meta_leak violation, NOT just anglicism."""
+    text = (
+        "3+ года разработки на Flutter. В OtherMark спроектировал ERP на Clean "
+        "Architecture с 5 модулями. Кодовая база 11000 строк. openers: "
+        "опыт работы с большой кодовой базой.\n\n"
+        "BLoC и Clean Architecture применялись в системе с 6 ролями и 20 "
+        "компонентами достижений."
+    )
+    facts = _make_facts()
+    result = validate_deterministic(text, facts=facts, allowed_numbers=ALLOWED_NUMBERS)
+    rules = {v.rule for v in result.violations}
+    evidences = {v.evidence for v in result.violations if v.rule == "meta_leak"}
+    assert "meta_leak" in rules
+    assert "openers" in evidences
+    # Anglicism for 'openers' should NOT also fire (avoid duplicate).
+    angl_evidences = {v.evidence for v in result.violations if v.rule == "anglicism"}
+    assert "openers" not in angl_evidences
+
+
+def test_snake_case_token_is_flagged_as_meta_leak():
+    text = (
+        "3+ года Flutter-разработки. В selected_project = OtherMark — 5 модулей, "
+        "11000 строк кода в Clean Architecture.\n\n"
+        "BLoC применялся в системе с 6 ролями и 20 компонентами."
+    )
+    facts = _make_facts()
+    result = validate_deterministic(text, facts=facts, allowed_numbers=ALLOWED_NUMBERS)
+    assert any(
+        v.rule == "meta_leak" and v.evidence == "selected_project"
+        for v in result.violations
+    )
+
+
+def test_universal_mode_skips_too_few_numbers():
+    one_para = (
+        "3+ года Flutter-разработки в командной среде. "
+        "Опыт в проектах с разной бизнес-логикой и интеграциями. "
+        "Применяю Clean Architecture и BLoC для масштабируемого кода. "
+        "Навыки применимы к продуктовым задачам разного профиля и сложности, "
+        "включая работу с REST API и асинхронными процессами в Flutter."
+    )
+    facts = _make_facts()
+    result = validate_deterministic(
+        one_para,
+        facts=facts,
+        allowed_numbers=ALLOWED_NUMBERS,
+        universal_mode=True,
+    )
+    # In universal mode the too_few_numbers rule is intentionally disabled.
+    assert not any(v.rule == "too_few_numbers" for v in result.violations)
