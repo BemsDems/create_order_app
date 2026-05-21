@@ -83,8 +83,15 @@ async def amain() -> int:
         max_words=int(pipeline_cfg_data.get("max_words", 130)),
         max_writer_retries=int(pipeline_cfg_data.get("max_writer_retries", 2)),
         use_semantic_validator=not args.no_semantic,
+        low_confidence_threshold=float(
+            pipeline_cfg_data.get("low_confidence_threshold", 0.5)
+        ),
+        skip_below_confidence=float(
+            pipeline_cfg_data.get("skip_below_confidence", 0.2)
+        ),
     )
     max_concurrent = int(pipeline_cfg_data.get("max_concurrent", 5))
+    forbidden_claims = settings_data.get("forbidden_claims")
 
     profile = load_profile(args.resume)
     vacancies = load_vacancies(args.vacancies)
@@ -104,7 +111,12 @@ async def amain() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     llm = LLMClient(llm_cfg)
-    pipeline = CoverLetterPipeline(llm, profile, config=pipeline_cfg)
+    pipeline = CoverLetterPipeline(
+        llm,
+        profile,
+        config=pipeline_cfg,
+        forbidden_claims=forbidden_claims,
+    )
     try:
         results = await pipeline.generate_batch(vacancies, max_concurrent=max_concurrent)
     finally:

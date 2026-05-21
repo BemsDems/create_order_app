@@ -1,4 +1,12 @@
-"""3-pass orchestrator: Analyze -> Write -> Validate -> (Rewrite up to N)."""
+"""3-pass orchestrator: Analyze -> Write -> Validate -> (Rewrite up to N).
+
+v2 changes:
+- Builds a `CanonicalFacts` from the profile once at init.
+- Passes CanonicalFacts (read-only) into Analyzer and Validator.
+- Routes low-confidence vacancies to universal-letter mode.
+- Emits richer `GenerationResult` (selected_project, confidence,
+  used_numbers, used_tech, attempts, semantic_validator_used).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +15,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .analyzer import analyze, profile_to_compact_dict
+from .analyzer import analyze
+from .facts import CanonicalFacts, extract_canonical_facts
 from .llm_client import LLMClient
 from .models import Profile, Vacancy
 from .validator import ValidationResult, validate_deterministic, validate_semantic
@@ -24,6 +33,13 @@ class GenerationResult:
     title: str
     letter: Optional[str]
     analyzer_json: Optional[Dict[str, Any]]
+    selected_project: Optional[str]
+    confidence: float
+    confidence_reason: str
+    used_numbers: List[str]
+    used_tech: List[str]
+    universal_mode: bool
+    semantic_validator_used: bool
     word_count: int
     passed: bool
     attempts: int
@@ -37,6 +53,13 @@ class GenerationResult:
             "title": self.title,
             "letter": self.letter,
             "analyzer_json": self.analyzer_json,
+            "selected_project": self.selected_project,
+            "confidence": self.confidence,
+            "confidence_reason": self.confidence_reason,
+            "used_numbers": self.used_numbers,
+            "used_tech": self.used_tech,
+            "universal_mode": self.universal_mode,
+            "semantic_validator_used": self.semantic_validator_used,
             "word_count": self.word_count,
             "passed": self.passed,
             "attempts": self.attempts,
@@ -53,6 +76,10 @@ class PipelineConfig:
     use_semantic_validator: bool = True
     writer_temperature: float = 0.4
     writer_max_tokens: int = 400
+    # Confidence threshold: vacancies below this trigger universal-letter mode.
+    low_confidence_threshold: float = 0.5
+    # Hard cutoff: below this we don't generate at all.
+    skip_below_confidence: float = 0.2
 
 
 class CoverLetterPipeline:
@@ -62,65 +89,103 @@ class CoverLetterPipeline:
     the first sentence within a single batch.
     """
 
-    def __init__(self, llm: LLMClient, profile: Profile, config: Optional[PipelineConfig] = None):
+    def __init__(
+        self,
+        llm: LLMClient,
+        profile: Profile,
+        config: Optional[PipelineConfig] = None,
+        *,
+        forbidden_claims: Optional[List[str]] = None,
+    ):
         self.llm = llm
         self.profile = profile
         self.config = config or PipelineConfig()
         self.used_starts: List[str] = []
-        self._profile_dict = profile_to_compact_dict(profile)
+        self.facts: CanonicalFacts = extract_canonical_facts(
+            profile, forbidden_claims=forbidden_claims
+        )
 
     async def generate(self, vacancy: Vacancy) -> GenerationResult:
         try:
-            analyzer_json = await analyze(self.llm, vacancy, self.profile)
+            analyzer_json = await analyze(self.llm, vacancy, self.facts)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Analyzer failed for vacancy %s", vacancy.id)
+            return _error_result(vacancy, error=f"analyzer: {exc}")
+
+        confidence = float(analyzer_json.get("confidence", 0.0))
+        confidence_reason = str(analyzer_json.get("confidence_reason") or "")
+        selected_project = str(analyzer_json.get("selected_project") or "")
+        selected_numbers: List[str] = list(analyzer_json.get("selected_numbers") or [])
+
+        # Hard skip on very low confidence — emit a result with no letter.
+        if confidence < self.config.skip_below_confidence:
+            logger.info(
+                "Vacancy %s: confidence %.2f below skip threshold %.2f — skipping",
+                vacancy.id, confidence, self.config.skip_below_confidence,
+            )
             return GenerationResult(
                 vacancy_id=vacancy.id,
                 company=vacancy.company,
                 title=vacancy.title,
                 letter=None,
-                analyzer_json=None,
+                analyzer_json=analyzer_json,
+                selected_project=selected_project,
+                confidence=confidence,
+                confidence_reason=confidence_reason,
+                used_numbers=[],
+                used_tech=[],
+                universal_mode=False,
+                semantic_validator_used=False,
                 word_count=0,
                 passed=False,
                 attempts=0,
-                error=f"analyzer: {exc}",
+                error="skipped_low_confidence",
             )
 
-        allowed_numbers: List[str] = list(analyzer_json.get("allowed_numbers") or [])
+        universal_mode = confidence < self.config.low_confidence_threshold
+        if universal_mode:
+            logger.info(
+                "Vacancy %s: confidence %.2f below %.2f — universal mode",
+                vacancy.id, confidence, self.config.low_confidence_threshold,
+            )
 
         feedback: Optional[str] = None
         last_letter: str = ""
         last_result: Optional[ValidationResult] = None
+        semantic_used = False
+
         for attempt in range(1, self.config.max_writer_retries + 2):
             try:
                 last_letter = await write_letter(
                     self.llm,
                     analyzer_json=analyzer_json,
-                    profile_dict=self._profile_dict,
+                    facts=self.facts,
                     used_starts=self.used_starts,
                     feedback=feedback,
+                    universal_mode=universal_mode,
                     temperature=self.config.writer_temperature,
                     max_tokens=self.config.writer_max_tokens,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Writer failed (attempt %d) for vacancy %s", attempt, vacancy.id)
-                return GenerationResult(
-                    vacancy_id=vacancy.id,
-                    company=vacancy.company,
-                    title=vacancy.title,
-                    letter=None,
-                    analyzer_json=analyzer_json,
-                    word_count=0,
-                    passed=False,
-                    attempts=attempt,
+                return _error_result(
+                    vacancy,
                     error=f"writer: {exc}",
+                    analyzer_json=analyzer_json,
+                    confidence=confidence,
+                    confidence_reason=confidence_reason,
+                    selected_project=selected_project,
+                    universal_mode=universal_mode,
+                    attempts=attempt,
                 )
 
             det = validate_deterministic(
                 last_letter,
-                allowed_numbers=allowed_numbers,
+                facts=self.facts,
+                allowed_numbers=selected_numbers,
                 min_words=self.config.min_words,
                 max_words=self.config.max_words,
+                universal_mode=universal_mode,
             )
             if not det.passed:
                 feedback = det.format_feedback()
@@ -132,9 +197,13 @@ class CoverLetterPipeline:
                 continue
 
             if self.config.use_semantic_validator:
+                semantic_used = True
                 try:
                     sem = await validate_semantic(
-                        self.llm, last_letter, analyzer_json, allowed_numbers
+                        self.llm,
+                        last_letter,
+                        analyzer_json,
+                        selected_numbers or list(self.facts.allowed_numbers),
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Semantic validator errored, treating as passed: %s", exc)
@@ -142,17 +211,23 @@ class CoverLetterPipeline:
 
                 if not sem.passed:
                     feedback = sem.format_feedback()
+                    # Preserve det.used_numbers/used_tech (semantic doesn't compute them).
+                    sem.used_numbers = det.used_numbers
+                    sem.used_tech = det.used_tech
                     last_result = sem
                     logger.info(
                         "Vacancy %s: attempt %d failed semantic validation (%d violations)",
                         vacancy.id, attempt, len(sem.violations),
                     )
                     continue
+                # Semantic passed — merge det's used_* into the result.
+                sem.used_numbers = det.used_numbers
+                sem.used_tech = det.used_tech
                 last_result = sem
             else:
                 last_result = det
 
-            # Success: record the opener for variety in subsequent letters.
+            # Success: record opener for variety.
             opener = last_letter.strip().split(".", 1)[0]
             if opener:
                 self.used_starts.append(opener[:80])
@@ -163,6 +238,13 @@ class CoverLetterPipeline:
                 title=vacancy.title,
                 letter=last_letter,
                 analyzer_json=analyzer_json,
+                selected_project=selected_project,
+                confidence=confidence,
+                confidence_reason=confidence_reason,
+                used_numbers=list(last_result.used_numbers),
+                used_tech=list(last_result.used_tech),
+                universal_mode=universal_mode,
+                semantic_validator_used=semantic_used,
                 word_count=det.word_count,
                 passed=True,
                 attempts=attempt,
@@ -176,6 +258,13 @@ class CoverLetterPipeline:
             title=vacancy.title,
             letter=last_letter or None,
             analyzer_json=analyzer_json,
+            selected_project=selected_project,
+            confidence=confidence,
+            confidence_reason=confidence_reason,
+            used_numbers=list(last_result.used_numbers) if last_result else [],
+            used_tech=list(last_result.used_tech) if last_result else [],
+            universal_mode=universal_mode,
+            semantic_validator_used=semantic_used,
             word_count=(last_result.word_count if last_result else 0),
             passed=False,
             attempts=self.config.max_writer_retries + 1,
@@ -196,3 +285,34 @@ class CoverLetterPipeline:
                 return await self.generate(v)
 
         return await asyncio.gather(*(_one(v) for v in vacancies))
+
+
+def _error_result(
+    vacancy: Vacancy,
+    *,
+    error: str,
+    analyzer_json: Optional[Dict[str, Any]] = None,
+    confidence: float = 0.0,
+    confidence_reason: str = "",
+    selected_project: Optional[str] = None,
+    universal_mode: bool = False,
+    attempts: int = 0,
+) -> GenerationResult:
+    return GenerationResult(
+        vacancy_id=vacancy.id,
+        company=vacancy.company,
+        title=vacancy.title,
+        letter=None,
+        analyzer_json=analyzer_json,
+        selected_project=selected_project,
+        confidence=confidence,
+        confidence_reason=confidence_reason,
+        used_numbers=[],
+        used_tech=[],
+        universal_mode=universal_mode,
+        semantic_validator_used=False,
+        word_count=0,
+        passed=False,
+        attempts=attempts,
+        error=error,
+    )

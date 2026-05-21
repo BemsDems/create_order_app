@@ -2,12 +2,19 @@
 
 Two layers:
 
-1. **Deterministic checks** (this module, pure Python): length, paragraph count,
-   forbidden phrases, anglicism patterns, library names, numeric whitelist.
-   These are cheap, reliable, and run before any LLM call.
+1. **Deterministic checks** (this module, pure Python): length, paragraph
+   count, forbidden phrases, anglicism patterns, library names, numeric
+   whitelist, *forbidden_claim* (grounded against the resume),
+   *unknown_tech_term* (any PascalCase tech token must come from the
+   resume's tech stack).
 
-2. **Semantic checks** (LLM, optional): detects hook-not-addressed,
-   advice-to-company, weak ending. Run only if deterministic checks pass.
+2. **Semantic checks** (LLM, optional): hook-not-addressed, advice-to-
+   company, weak ending, invented domain. Runs only if deterministic
+   checks pass.
+
+In v2 the validator takes a full `CanonicalFacts` instead of just an
+allowed_numbers list — this gives it access to forbidden_claims and the
+tech whitelist.
 """
 
 from __future__ import annotations
@@ -16,8 +23,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
+from .facts import CanonicalFacts
 from .llm_client import LLMClient
 from .prompts.validator import VALIDATOR_SYSTEM, build_validator_user
 
@@ -59,16 +67,16 @@ FORBIDDEN_LIBRARIES: List[str] = [
 ]
 
 
-# Tech terms allowed as English even inside Russian sentences.
-# Matched case-insensitively against bare lowercase tokens by `_find_anglicisms`.
-ALLOWED_TECH_TERMS = {
+# Always-allowed English tokens (project-agnostic). Project-specific tech
+# comes from `CanonicalFacts.allowed_tech` and is unioned with this at
+# check time.
+BASE_ALLOWED_TECH: set[str] = {
     "Flutter", "Dart", "BLoC", "Cubit", "gRPC", "JWT", "REST", "API",
     "Web", "iOS", "Android", "Firebase", "FCM", "Clean", "Architecture",
     "GraphQL", "SQL", "SDK", "OTP", "B2B", "ERP", "CI/CD", "Git",
     "WebView", "SQLite", "URL", "HTTP", "HTTPS", "UI", "UX",
-    # Common IT loan-words that are routinely used as-is in Russian.
     "production", "backend", "frontend", "mobile", "open", "source",
-    "legacy", "deploy", "release", "build", "pipeline",
+    "legacy", "deploy", "release", "build", "pipeline", "DI", "ORM",
 }
 
 
@@ -87,6 +95,8 @@ class ValidationResult:
     passed: bool
     violations: List[Violation] = field(default_factory=list)
     word_count: int = 0
+    used_numbers: List[str] = field(default_factory=list)
+    used_tech: List[str] = field(default_factory=list)
 
     def format_feedback(self) -> str:
         if not self.violations:
@@ -102,14 +112,34 @@ class ValidationResult:
 
 def validate_deterministic(
     letter: str,
-    allowed_numbers: List[str],
     *,
+    facts: CanonicalFacts,
+    allowed_numbers: Optional[Sequence[str]] = None,
     min_words: int = 100,
     max_words: int = 130,
+    universal_mode: bool = False,
 ) -> ValidationResult:
-    """Run cheap, regex-level checks. Returns all violations found (not first-only)."""
+    """Run cheap, regex-level checks. Returns all violations found.
+
+    Args:
+        letter: the generated text.
+        facts: canonical facts for fact-level grounding (forbidden_claim,
+            unknown_tech_term, allowed_company_names).
+        allowed_numbers: subset of `facts.allowed_numbers` actually selected
+            for this letter (the Analyzer's `selected_numbers`). Numbers in
+            the letter that aren't in this subset are flagged. If omitted,
+            falls back to `facts.allowed_numbers`.
+        min_words / max_words: word-count band.
+        universal_mode: relaxed format — one paragraph, shorter range
+            (default 90-115 if standard band is left unchanged).
+    """
     violations: List[Violation] = []
     text = letter.strip()
+    allowed_numbers_list = list(allowed_numbers if allowed_numbers is not None else facts.allowed_numbers)
+
+    # Universal-mode shortens the default word range, but caller can override.
+    if universal_mode and (min_words, max_words) == (100, 130):
+        min_words, max_words = 90, 115
 
     # 1. Length.
     words = _word_count(text)
@@ -117,7 +147,7 @@ def validate_deterministic(
         violations.append(Violation(
             rule="too_short",
             evidence=f"{words} слов (нужно {min_words}-{max_words})",
-            fix_hint="Расширь абзац 1 ещё одним фактом из evidence.",
+            fix_hint="Добавь ещё один факт из selected_achievements.",
         ))
     elif words > max_words:
         violations.append(Violation(
@@ -128,14 +158,16 @@ def validate_deterministic(
 
     # 2. Paragraph count.
     paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
-    if len(paragraphs) != 2:
+    expected = 1 if universal_mode else 2
+    if len(paragraphs) != expected:
         violations.append(Violation(
             rule="wrong_paragraph_count",
-            evidence=f"{len(paragraphs)} абзаца (нужно ровно 2)",
-            fix_hint="Раздели текст на ровно 2 абзаца пустой строкой.",
+            evidence=f"{len(paragraphs)} абзаца (нужно ровно {expected})",
+            fix_hint=f"Раздели текст на {expected} абзац(а) пустой строкой." if expected == 2 else
+                     "Объедини текст в один абзац (universal mode).",
         ))
 
-    # 3. Forbidden phrases (case-insensitive).
+    # 3. Forbidden phrases.
     lower = text.lower()
     for phrase in FORBIDDEN_PHRASES:
         if phrase.lower() in lower:
@@ -154,46 +186,91 @@ def validate_deterministic(
                 fix_hint=f"Замени «{lib}» обобщённым термином (DI / HTTP-клиент / state management).",
             ))
 
-    # 5. Years-of-experience in the first sentence.
-    # Looks for a digit at a word boundary (so "2" inside "B2B" doesn't count)
-    # or an explicit "N+" / "N лет/года/год" pattern.
-    first_sentence = _first_sentence(text)
-    if first_sentence and not _opener_has_years(first_sentence):
-        violations.append(Violation(
-            rule="no_years_in_opener",
-            evidence=first_sentence[:80],
-            fix_hint="В первое предложение добавь число лет опыта (например, «3+ года»).",
-        ))
+    # 5. Years-of-experience in the first sentence (standard mode only —
+    # in universal mode the structure differs).
+    if not universal_mode:
+        first_sentence = _first_sentence(text)
+        if first_sentence and not _opener_has_years(first_sentence):
+            violations.append(Violation(
+                rule="no_years_in_opener",
+                evidence=first_sentence[:80],
+                fix_hint="В первое предложение добавь число лет опыта (например, «3+ года»).",
+            ))
 
-    # 6. Numeric whitelist.
-    allowed_set = {n.strip() for n in allowed_numbers if n}
+    # 6. Numeric whitelist (subset selected by Analyzer).
+    allowed_set = {n.strip() for n in allowed_numbers_list if n}
     found_numbers = _extract_numbers(text)
+    used_numbers: List[str] = []
     for n in found_numbers:
         if n not in allowed_set:
             violations.append(Violation(
                 rule="invented_number",
                 evidence=n,
-                fix_hint=f"Число «{n}» нет в allowed_numbers — удали или замени на число из списка.",
+                fix_hint=f"Число «{n}» нет в selected_numbers — удали или замени.",
             ))
+        elif n not in used_numbers:
+            used_numbers.append(n)
 
     # 7. Minimum number of numeric facts.
-    if len({n for n in found_numbers if n in allowed_set}) < 2:
+    if len(used_numbers) < 2:
         violations.append(Violation(
             rule="too_few_numbers",
-            evidence=f"использовано {len(found_numbers)} чисел из allowed_numbers (нужно минимум 2)",
-            fix_hint="Добавь ещё одну метрику из allowed_numbers (например, число модулей или строк кода).",
+            evidence=f"использовано {len(used_numbers)} чисел (нужно минимум 2)",
+            fix_hint="Добавь ещё одну метрику из selected_numbers.",
         ))
 
-    # 8. Russian-with-anglicism heuristic.
-    angl = _find_anglicisms(text)
-    for word in angl:
+    # 8. Anglicism heuristic (lowercase Latin tokens not in BASE_ALLOWED_TECH
+    # ∪ project-level allowed_tech).
+    angl_allowed_lower = {t.lower() for t in BASE_ALLOWED_TECH} | {t.lower() for t in facts.allowed_tech}
+    for word in _find_anglicisms(text, allowed_lower=angl_allowed_lower):
         violations.append(Violation(
             rule="anglicism",
             evidence=word,
             fix_hint=f"Замени «{word}» русским эквивалентом.",
         ))
 
-    return ValidationResult(passed=not violations, violations=violations, word_count=words)
+    # 9. Unknown tech tokens (PascalCase / mixed-case identifiers not in the
+    # union of base + project tech + project names + company names).
+    tech_allowed = (
+        BASE_ALLOWED_TECH
+        | facts.allowed_tech
+        | facts.allowed_project_names
+        | facts.allowed_company_names
+    )
+    used_tech: List[str] = []
+    for token in _find_tech_identifiers(text):
+        if token in tech_allowed:
+            if token not in used_tech:
+                used_tech.append(token)
+            continue
+        # Try a relaxed match against the allowed set (case-insensitive).
+        if any(token.lower() == a.lower() for a in tech_allowed):
+            if token not in used_tech:
+                used_tech.append(token)
+            continue
+        violations.append(Violation(
+            rule="unknown_tech_term",
+            evidence=token,
+            fix_hint=f"«{token}» нет в allowed_tech/allowed_project_names — удали или замени на термин из списка.",
+        ))
+
+    # 10. Grounded forbidden claims (smell-phrases NOT present in the resume).
+    grounded_forbidden = facts.forbidden_claims_grounded()
+    for claim in grounded_forbidden:
+        if claim.lower() in lower:
+            violations.append(Violation(
+                rule="forbidden_claim",
+                evidence=claim,
+                fix_hint=f"«{claim}» отсутствует в резюме — удали или замени на факт из selected_achievements.",
+            ))
+
+    return ValidationResult(
+        passed=not violations,
+        violations=violations,
+        word_count=words,
+        used_numbers=used_numbers,
+        used_tech=used_tech,
+    )
 
 
 async def validate_semantic(
@@ -221,7 +298,7 @@ async def validate_semantic(
         return ValidationResult(passed=True, violations=[], word_count=_word_count(letter))
 
     violations_raw = parsed.get("violations") or []
-    violations = []
+    violations: List[Violation] = []
     for v in violations_raw:
         if not isinstance(v, dict):
             continue
@@ -250,19 +327,11 @@ def _word_count(text: str) -> int:
 
 
 def _first_sentence(text: str) -> str:
-    # Сплитим по точке/восклицательному/вопросительному. Очень простая
-    # эвристика: достаточно для нашего жанра.
     match = re.search(r"^[^\.\!\?\n]+", text)
     return match.group(0) if match else ""
 
 
 def _opener_has_years(first_sentence: str) -> bool:
-    """True iff the opener mentions a year count.
-
-    Accepts "3+", "3 года", "3+ лет", a standalone digit token like "5 модулей"
-    — i.e. any digit at a word boundary. Rejects digits embedded in identifiers
-    such as "B2B".
-    """
     return bool(_OPENER_YEARS_RE.search(first_sentence))
 
 
@@ -270,10 +339,6 @@ _NUMBER_TOKEN_RE = re.compile(r"(?<!\w)(\d[\d\s]{0,4}\d|\d)\+?(?!\w)")
 
 
 def _extract_numbers(text: str) -> List[str]:
-    """Find all numeric tokens, normalizing whitespace inside them.
-
-    "11 000" and "11000" both normalize to "11000".
-    """
     out: List[str] = []
     for raw in _NUMBER_TOKEN_RE.findall(text):
         normalized = re.sub(r"\s+", "", raw)
@@ -282,21 +347,37 @@ def _extract_numbers(text: str) -> List[str]:
     return out
 
 
-# Very conservative English-word detector. Triggers only on lowercase ASCII
-# tokens of length >= 4 that are NOT in the allowed tech-term whitelist.
 _LATIN_WORD_RE = re.compile(r"\b[a-z][a-z]{3,}\b")
 
 
-def _find_anglicisms(text: str) -> List[str]:
+def _find_anglicisms(text: str, *, allowed_lower: set[str]) -> List[str]:
     found: List[str] = []
-    allowed_lower = {t.lower() for t in ALLOWED_TECH_TERMS}
     for word in _LATIN_WORD_RE.findall(text):
         if word in allowed_lower:
             continue
-        # Allow English words that are part of project names already capitalized
-        # in the resume — but those would be PascalCase, not lowercase.
         found.append(word)
     return found
+
+
+# Capitalized / mixed-case Latin identifiers (Flutter, BLoC, OtherMark, GetIt).
+# Excludes pure lowercase (those are handled by _find_anglicisms).
+_TECH_IDENT_RE = re.compile(r"\b(?:[A-Z][A-Za-z0-9]{1,}|[A-Z]+(?:/[A-Z]+)?)\b")
+
+
+def _find_tech_identifiers(text: str) -> List[str]:
+    """Extract candidate tech tokens — capitalized or mixed-case Latin runs."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for token in _TECH_IDENT_RE.findall(text):
+        # Skip 1-character all-uppercase tokens (sentence starts with "А" in cyrillic
+        # don't match anyway; but defend against stray "I").
+        if len(token) < 2:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        out.append(token)
+    return out
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
