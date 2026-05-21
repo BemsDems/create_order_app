@@ -30,6 +30,7 @@ async def write_letter(
     *,
     used_starts: Optional[List[str]] = None,
     feedback: Optional[str] = None,
+    hard_constraints: Optional[List[str]] = None,
     universal_mode: bool = False,
     temperature: float = 0.4,
     max_tokens: int = 400,
@@ -45,6 +46,7 @@ async def write_letter(
         opener_pool=opener_pool,
         used_starts=used_starts,
         feedback=feedback,
+        hard_constraints=hard_constraints,
     )
     raw = await llm.generate(
         system_prompt=system_prompt,

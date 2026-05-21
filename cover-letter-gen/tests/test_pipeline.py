@@ -322,3 +322,136 @@ async def test_no_semantic_validator_means_no_validator_calls():
     assert result.passed
     assert result.semantic_validator_used is False
     assert not any(c["system"] == VALIDATOR_SYSTEM for c in llm.calls)
+
+
+# ---------- v3 tests ----------
+
+
+@pytest.mark.asyncio
+async def test_fit_gate_skips_unrelated_vacancy_without_calling_llm():
+    """Backend Go/Kafka/Redis vacancy → pre-Analyzer skip, no LLM calls."""
+    profile = _make_profile()
+    backend_vac = Vacancy(
+        id="vac-go",
+        title="Backend Go Engineer",
+        company="SomeCo",
+        description="Backend Go developer with Kafka and Redis.",
+        requirements=["3+ years Go", "Kafka", "Redis", "PostgreSQL"],
+    )
+    # No mock responses queued; the test asserts no LLM call is made.
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [],
+        WRITER_SYSTEM_STANDARD: [],
+        WRITER_SYSTEM_UNIVERSAL: [],
+        VALIDATOR_SYSTEM: [],
+    })
+    pipeline = CoverLetterPipeline(llm, profile, config=PipelineConfig())
+    result = await pipeline.generate(backend_vac)
+
+    assert not result.passed
+    assert result.error == "skipped_no_tech_overlap"
+    assert result.letter is None
+    assert llm.calls == []  # no LLM was invoked.
+
+
+@pytest.mark.asyncio
+async def test_fit_gate_can_be_disabled():
+    """With enforce_fit_gate=False, even mismatched vacancies hit the Analyzer."""
+    profile = _make_profile()
+    backend_vac = Vacancy(
+        id="vac-go",
+        title="Backend Go Engineer",
+        description="Go + Kafka + Redis. No Flutter.",
+    )
+    # The Analyzer should give very low confidence → skipped_low_confidence,
+    # but it should AT LEAST be called.
+    low_conf = dict(_ANALYZER_RESPONSE)
+    low_conf["confidence"] = 0.1
+    low_conf["selected_project"] = "OtherMark"
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(low_conf, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [],
+        WRITER_SYSTEM_UNIVERSAL: [],
+        VALIDATOR_SYSTEM: [],
+    })
+    cfg = PipelineConfig(enforce_fit_gate=False)
+    pipeline = CoverLetterPipeline(llm, profile, config=cfg)
+    result = await pipeline.generate(backend_vac)
+    assert any(c["system"] == ANALYZER_SYSTEM for c in llm.calls)
+    # With confidence 0.1 < skip_below_confidence (0.2), still skipped.
+    assert result.error == "skipped_low_confidence"
+
+
+@pytest.mark.asyncio
+async def test_writer_user_prompt_has_no_json_dumps():
+    """Verify the Writer user prompt is plain text, not JSON. Crucial because
+    in v2 the Writer was given raw JSON blocks, which the model copied into
+    the letter (the meta_leak bug we're fixing in v3)."""
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(_ANALYZER_RESPONSE, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [_GOOD_LETTER],
+        VALIDATOR_SYSTEM: [json.dumps({"passed": True, "violations": []})],
+    })
+    profile = _make_profile()
+    pipeline = CoverLetterPipeline(llm, profile, config=PipelineConfig())
+    await pipeline.generate(_make_vacancy())
+
+    writer_call = next(c for c in llm.calls if c["system"] == WRITER_SYSTEM_STANDARD)
+    user = writer_call["user"]
+    # Plain Russian headings, NOT english JSON labels.
+    assert "Факты для упоминания" in user
+    assert "Разрешённые числа" in user
+    assert "Разрешённые технологии" in user
+    # English JSON labels MUST NOT appear.
+    assert "selected_project" not in user
+    assert "selected_numbers" not in user
+    assert "selected_achievements" not in user
+    assert "allowed_tech" not in user
+    assert "hook_phrase" not in user
+    # No JSON object braces should appear in the user prompt body.
+    assert "{\n" not in user
+
+
+@pytest.mark.asyncio
+async def test_writer_system_prompt_has_no_digit_length_constraints():
+    """The Writer system prompt MUST NOT contain literal word-count digits
+    (the model copied '100', '130', '90', '115' into the letter as
+    invented_number violations). Length is enforced by the validator."""
+    for prompt in (WRITER_SYSTEM_STANDARD, WRITER_SYSTEM_UNIVERSAL):
+        assert "100–130" not in prompt
+        assert "100-130" not in prompt
+        assert "90–115" not in prompt
+        assert "90-115" not in prompt
+        # No bare 3-digit number followed by "слов" in the system prompt.
+        import re as _re
+        assert not _re.search(r"\b\d{2,3}\b\s*[-–]\s*\d{2,3}\s+слов", prompt)
+
+
+@pytest.mark.asyncio
+async def test_repeat_violation_escalates_to_hard_constraint():
+    """If the same violation appears twice in a row, the next Writer prompt
+    must contain a 'СТРОГО' hard-constraint section."""
+    # First two attempts produce a letter with the SAME invented number,
+    # third attempt produces a clean letter (caught by max_writer_retries=2).
+    bad_with_invented = (
+        "3+ года Flutter-разработки. В OtherMark спроектировал ERP на Clean "
+        "Architecture — 5 модулей и 999 фич. Кодовая база 11000 строк.\n\n"
+        "BLoC и Clean Architecture применялись в системе с 6 ролями."
+    )
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(_ANALYZER_RESPONSE, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [bad_with_invented, bad_with_invented, _GOOD_LETTER],
+        VALIDATOR_SYSTEM: [json.dumps({"passed": True, "violations": []})],
+    })
+    profile = _make_profile()
+    cfg = PipelineConfig(max_writer_retries=2)
+    pipeline = CoverLetterPipeline(llm, profile, config=cfg)
+    result = await pipeline.generate(_make_vacancy())
+
+    writer_calls = [c for c in llm.calls if c["system"] == WRITER_SYSTEM_STANDARD]
+    assert len(writer_calls) >= 3
+    # Third attempt's user prompt must contain a СТРОГО block referencing 999.
+    third_user = writer_calls[2]["user"]
+    assert "СТРОГО" in third_user
+    assert "999" in third_user
+    assert result.passed

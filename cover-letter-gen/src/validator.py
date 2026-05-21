@@ -80,6 +80,28 @@ BASE_ALLOWED_TECH: set[str] = {
 }
 
 
+# Words the model sometimes copies from the service JSON / instructions
+# into the letter itself. Hard-block them — they are NEVER part of a real
+# cover letter.
+META_LEAK_TERMS: set[str] = {
+    "openers", "opener",
+    "achievements", "achievement",
+    "confidence",
+    "selected_project", "selected_numbers", "selected_achievements",
+    "selected_facts",
+    "allowed_tech", "allowed_numbers", "allowed_project_names",
+    "allowed_company_names",
+    "hook_phrase",
+    "vacancy_type", "candidate_name",
+    "canonical", "canonical_facts",
+    "fix_hint",
+}
+
+# Snake_case Latin token (e.g. "selected_project", "fix_hint") — never
+# legitimately appears in a Russian cover letter.
+_SNAKE_CASE_RE = re.compile(r"\b[a-z]+_[a-z][a-z_]*\b")
+
+
 @dataclass
 class Violation:
     rule: str
@@ -147,13 +169,13 @@ def validate_deterministic(
         violations.append(Violation(
             rule="too_short",
             evidence=f"{words} слов (нужно {min_words}-{max_words})",
-            fix_hint="Добавь ещё один факт из selected_achievements.",
+            fix_hint=f"Добавь ещё {min_words - words} слов: один факт из «Фактов для упоминания».",
         ))
     elif words > max_words:
         violations.append(Violation(
             rule="too_long",
             evidence=f"{words} слов (нужно {min_words}-{max_words})",
-            fix_hint="Сократи общие фразы, оставь только конкретику.",
+            fix_hint=f"Сократи на {words - max_words} слов: убери общие фразы и повторы.",
         ))
 
     # 2. Paragraph count.
@@ -206,23 +228,44 @@ def validate_deterministic(
             violations.append(Violation(
                 rule="invented_number",
                 evidence=n,
-                fix_hint=f"Число «{n}» нет в selected_numbers — удали или замени.",
+                fix_hint=f"Число «{n}» нет среди разрешённых — удали или замени.",
             ))
         elif n not in used_numbers:
             used_numbers.append(n)
 
-    # 7. Minimum number of numeric facts.
-    if len(used_numbers) < 2:
+    # 7. Minimum number of numeric facts (skipped in universal mode —
+    # the letter is intentionally generic there).
+    if not universal_mode and len(used_numbers) < 2:
         violations.append(Violation(
             rule="too_few_numbers",
             evidence=f"использовано {len(used_numbers)} чисел (нужно минимум 2)",
-            fix_hint="Добавь ещё одну метрику из selected_numbers.",
+            fix_hint="Добавь ещё одну метрику из «Разрешённых чисел».",
+        ))
+
+    # 7.5. Meta-leak: service words from the prompt that the model sometimes
+    # copies into the letter. Hard-fails — no real letter contains "openers"
+    # or "selected_project".
+    meta_seen: set[str] = set()
+    for word in _find_meta_leaks(text):
+        if word in meta_seen:
+            continue
+        meta_seen.add(word)
+        violations.append(Violation(
+            rule="meta_leak",
+            evidence=word,
+            fix_hint=(
+                f"Слово «{word}» — служебное обозначение из инструкции, "
+                "его не должно быть в письме. Полностью убери."
+            ),
         ))
 
     # 8. Anglicism heuristic (lowercase Latin tokens not in BASE_ALLOWED_TECH
-    # ∪ project-level allowed_tech).
+    # ∪ project-level allowed_tech). Skip tokens already flagged as meta_leak
+    # to avoid duplicate violations.
     angl_allowed_lower = {t.lower() for t in BASE_ALLOWED_TECH} | {t.lower() for t in facts.allowed_tech}
     for word in _find_anglicisms(text, allowed_lower=angl_allowed_lower):
+        if word in meta_seen or word in META_LEAK_TERMS:
+            continue
         violations.append(Violation(
             rule="anglicism",
             evidence=word,
@@ -251,7 +294,7 @@ def validate_deterministic(
         violations.append(Violation(
             rule="unknown_tech_term",
             evidence=token,
-            fix_hint=f"«{token}» нет в allowed_tech/allowed_project_names — удали или замени на термин из списка.",
+            fix_hint=f"«{token}» нет в разрешённых технологиях — удали или замени на термин из списка.",
         ))
 
     # 10. Grounded forbidden claims (smell-phrases NOT present in the resume).
@@ -261,7 +304,7 @@ def validate_deterministic(
             violations.append(Violation(
                 rule="forbidden_claim",
                 evidence=claim,
-                fix_hint=f"«{claim}» отсутствует в резюме — удали или замени на факт из selected_achievements.",
+                fix_hint=f"«{claim}» отсутствует в резюме — удали или замени на факт из «Фактов для упоминания».",
             ))
 
     return ValidationResult(
@@ -348,6 +391,30 @@ def _extract_numbers(text: str) -> List[str]:
 
 
 _LATIN_WORD_RE = re.compile(r"\b[a-z][a-z]{3,}\b")
+
+
+def _find_meta_leaks(text: str) -> List[str]:
+    """Find words from META_LEAK_TERMS plus any snake_case Latin token.
+
+    Both signal that the model copied service text into the letter.
+    Detection is case-insensitive on the META_LEAK_TERMS list; snake_case
+    detection is lowercase by construction.
+    """
+    out: List[str] = []
+    seen: set[str] = set()
+    lower = text.lower()
+    # Direct meta-leak words (whole-word match).
+    for term in META_LEAK_TERMS:
+        if re.search(rf"(?<![A-Za-z]){re.escape(term)}(?![A-Za-z])", lower):
+            if term not in seen:
+                seen.add(term)
+                out.append(term)
+    # Any snake_case Latin run (selected_project, fix_hint, ...).
+    for match in _SNAKE_CASE_RE.findall(lower):
+        if match not in seen:
+            seen.add(match)
+            out.append(match)
+    return out
 
 
 def _find_anglicisms(text: str, *, allowed_lower: set[str]) -> List[str]:
