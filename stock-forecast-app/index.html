@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Прогноз акций — Российский рынок</title>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="assets/inference.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:#0a0f1a;color:#f1f5f9;font-family:'Manrope',sans-serif;overflow-x:hidden}
+
+  /* Scrollbar */
+  ::-webkit-scrollbar{width:6px}
+  ::-webkit-scrollbar-track{background:#0a0f1a}
+  ::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.4);border-radius:99px}
+
+  /* Glass */
+  .glass{background:rgba(255,255,255,0.04);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.08)}
+  .glass-strong{background:rgba(255,255,255,0.07);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,0.12)}
+
+  /* Particles canvas */
+  #particles-canvas{position:absolute;inset:0;pointer-events:none;z-index:0}
+
+  /* Gradient text */
+  .grad-text{background:linear-gradient(135deg,#f1f5f9 0%,#c4b5fd 40%,#67e8f9 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+
+  /* Hero glow */
+  .hero-glow{background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(124,58,237,0.22) 0%,transparent 70%),radial-gradient(ellipse 60% 40% at 80% 30%,rgba(6,182,212,0.12) 0%,transparent 60%)}
+
+  /* Card hover */
+  .company-card{transition:transform 0.28s cubic-bezier(0.16,1,0.3,1),box-shadow 0.28s ease,border-color 0.28s ease}
+  .company-card:hover{transform:translateY(-4px) scale(1.02)}
+
+  /* Animations */
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  @keyframes pulse-ring{0%{transform:scale(0.9);opacity:1}100%{transform:scale(1.6);opacity:0}}
+  @keyframes spin-slow{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  @keyframes fade-up{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes counter{from{opacity:0}to{opacity:1}}
+  @keyframes wave{0%,100%{transform:scaleY(0.4)}50%{transform:scaleY(1)}}
+  @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+  @keyframes bar-fill{from{width:0}to{width:var(--w)}}
+
+  .animate-float{animation:float 4s ease-in-out infinite}
+  .animate-fade-up{animation:fade-up 0.6s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-2{animation:fade-up 0.6s 0.12s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-3{animation:fade-up 0.6s 0.24s cubic-bezier(0.16,1,0.3,1) both}
+  .animate-fade-up-4{animation:fade-up 0.6s 0.36s cubic-bezier(0.16,1,0.3,1) both}
+
+  .shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.03) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.03) 75%);background-size:200% 100%;animation:shimmer 1.8s infinite}
+
+  /* Nav */
+  nav{position:fixed;top:0;left:0;right:0;z-index:100;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);background:rgba(10,15,26,0.8);border-bottom:1px solid rgba(255,255,255,0.07)}
+
+  /* Sector tab active */
+  .sector-tab.active{background:rgba(124,58,237,0.2);border-color:rgba(124,58,237,0.5);color:#c4b5fd}
+
+  /* Progress bar fill animation */
+  .bar-fill{transition:width 1.2s cubic-bezier(0.16,1,0.3,1)}
+
+  /* Counter animation */
+  @keyframes count-up{from{opacity:0;transform:scale(0.8)}to{opacity:1;transform:scale(1)}}
+  .count-anim{animation:count-up 0.5s cubic-bezier(0.34,1.56,0.64,1) both}
+
+  /* Loading bars */
+  .load-bar{display:inline-block;width:3px;border-radius:2px;animation:wave 1s ease-in-out infinite}
+  .load-bar:nth-child(1){animation-delay:0s}
+  .load-bar:nth-child(2){animation-delay:0.1s}
+  .load-bar:nth-child(3){animation-delay:0.2s}
+  .load-bar:nth-child(4){animation-delay:0.3s}
+  .load-bar:nth-child(5){animation-delay:0.4s}
+
+  input[type=range]{-webkit-appearance:none;appearance:none;background:transparent}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:0;height:0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ── DATA ─────────────────────────────────────────────────────── */
+const SECTORS = {
+  oil:      { label:'Нефтегаз',      color:'#f97316', bg:'rgba(249,115,22,0.12)' },
+  finance:  { label:'Финансы',       color:'#3b82f6', bg:'rgba(59,130,246,0.12)' },
+  tech:     { label:'Технологии',    color:'#a855f7', bg:'rgba(168,85,247,0.12)' },
+  metal:    { label:'Металлургия',   color:'#94a3b8', bg:'rgba(148,163,184,0.12)' },
+  retail:   { label:'Ритейл',        color:'#ec4899', bg:'rgba(236,72,153,0.12)' },
+  telecom:  { label:'Телеком',       color:'#06b6d4', bg:'rgba(6,182,212,0.12)' },
+  energy:   { label:'Энергетика',    color:'#eab308', bg:'rgba(234,179,8,0.12)' },
+  transport:{ label:'Транспорт',     color:'#22c55e', bg:'rgba(34,197,94,0.12)' },
+  realty:   { label:'Недвижимость',  color:'#14b8a6', bg:'rgba(20,184,166,0.12)' },
+  chem:     { label:'Химия',         color:'#84cc16', bg:'rgba(132,204,22,0.12)' },
+  holding:  { label:'Холдинги',      color:'#6366f1', bg:'rgba(99,102,241,0.12)' },
+  timber:   { label:'Лесопром',      color:'#10b981', bg:'rgba(16,185,129,0.12)' },
+  agro:     { label:'Агро',          color:'#16a34a', bg:'rgba(22,163,74,0.12)' },
+  machine:  { label:'Машиностр.',    color:'#64748b', bg:'rgba(100,116,139,0.12)' },
+};
+
+const COMPANIES = [
+  { ticker:'SBER',  name:'Сбербанк',            sector:'finance'  },
+  { ticker:'GAZP',  name:'Газпром',              sector:'oil'      },
+  { ticker:'LKOH',  name:'Лукойл',               sector:'oil'      },
+  { ticker:'ROSN',  name:'Роснефть',             sector:'oil'      },
+  { ticker:'GMKN',  name:'Норильский никель',    sector:'metal'    },
+  { ticker:'NVTK',  name:'Новатэк',              sector:'oil'      },
+  { ticker:'YNDX',  name:'Яндекс',               sector:'tech'     },
+  { ticker:'MTSS',  name:'МТС',                  sector:'telecom'  },
+  { ticker:'MGNT',  name:'Магнит',               sector:'retail'   },
+  { ticker:'FIVE',  name:'X5 Retail Group',       sector:'retail'   },
+  { ticker:'PLZL',  name:'Полюс Золото',          sector:'metal'    },
+  { ticker:'POLY',  name:'Polymetal',             sector:'metal'    },
+  { ticker:'ALRS',  name:'АЛРОСА',               sector:'metal'    },
+  { ticker:'CHMF',  name:'Северсталь',           sector:'metal'    },
+  { ticker:'NLMK',  name:'НЛМК',                 sector:'metal'    },
+  { ticker:'MAGN',  name:'ММК',                  sector:'metal'    },
+  { ticker:'VTBR',  name:'ВТБ',                  sector:'finance'  },
+  { ticker:'MOEX',  name:'Московская биржа',     sector:'finance'  },
+  { ticker:'PHOR',  name:'ФосАгро',              sector:'chem'     },
+  { ticker:'RUAL',  name:'РУСАЛ',                sector:'metal'    },
+  { ticker:'OZON',  name:'Ozon',                 sector:'tech'     },
+  { ticker:'VKCO',  name:'ВКонтакте',            sector:'tech'     },
+  { ticker:'IRAO',  name:'Интер РАО',            sector:'energy'   },
+  { ticker:'FEES',  name:'ФСК ЕЭС',             sector:'energy'   },
+  { ticker:'HYDR',  name:'РусГидро',             sector:'energy'   },
+  { ticker:'RTKM',  name:'Ростелеком',           sector:'telecom'  },
+  { ticker:'AFLT',  name:'Аэрофлот',             sector:'transport'},
+  { ticker:'PIKK',  name:'ПИК',                  sector:'realty'   },
+  { ticker:'SMLT',  name:'Самолёт',              sector:'realty'   },
+  { ticker:'SGZH',  name:'Сегежа',               sector:'timber'   },
+  { ticker:'MTLR',  name:'Мечел',                sector:'metal'    },
+  { ticker:'AFKS',  name:'АФК Система',          sector:'holding'  },
+  { ticker:'CBOM',  name:'МКБ',                  sector:'finance'  },
+  { ticker:'TATN',  name:'Татнефть',             sector:'oil'      },
+  { ticker:'SNGS',  name:'Сургутнефтегаз',      sector:'oil'      },
+  { ticker:'BANE',  name:'Башнефть',             sector:'oil'      },
+  { ticker:'TRNFP', name:'Транснефть',           sector:'oil'      },
+  { ticker:'NMTP',  name:'НМТП',                 sector:'transport'},
+  { ticker:'FLOT',  name:'Совкомфлот',           sector:'transport'},
+  { ticker:'UWGN',  name:'Уралвагонзавод',       sector:'machine'  },
+  { ticker:'TCSG',  name:'Т-Банк',              sector:'finance'  },
+  { ticker:'FIXP',  name:'Fix Price',            sector:'retail'   },
+  { ticker:'ENPG',  name:'ЭН+',                 sector:'energy'   },
+  { ticker:'DSKY',  name:'Детский мир',          sector:'retail'   },
+  { ticker:'LENT',  name:'Лента',               sector:'retail'   },
+  { ticker:'RASP',  name:'Распадская',           sector:'metal'    },
+  { ticker:'SELG',  name:'Селигдар',             sector:'metal'    },
+  { ticker:'POGR',  name:'ПОЭЗ',                sector:'energy'   },
+  { ticker:'BSPB',  name:'Банк Санкт-Петербург', sector:'finance'  },
+  { ticker:'AQUA',  name:'Инарктика',            sector:'agro'     },
+  { ticker:'RNFT',  name:'РуссНефть',            sector:'oil'      },
+  { ticker:'MSNG',  name:'Мосэнерго',            sector:'energy'   },
+  { ticker:'LSRG',  name:'ЛСР',                 sector:'realty'   },
+  { ticker:'RENI',  name:'Ренессанс Страхование',sector:'finance'  },
+];
+
+/* Asset directory — relative to index.html. Holds tcn_meta.json and the three
+   tcn_{short,medium,long}_weights.json bundles. Override via window.__ASSETS__. */
+const ASSETS_BASE = (window.__ASSETS__ || 'assets').replace(/\/$/, '');
+
+/* Three TCN models, each trained on a different horizon and reused for nearby ones. */
+const HORIZON_GROUPS = [
+  { key:'short',  label:'Короткий',  horizons:[5, 10],         thrPct:3,  desc:'Модель TCN, обучена на 5-дневном таргете.' },
+  { key:'medium', label:'Средний',   horizons:[30, 60],        thrPct:5,  desc:'Модель TCN, обучена на 30-дневном таргете.' },
+  { key:'long',   label:'Длинный',   horizons:[120, 240, 365], thrPct:12, desc:'Модель TCN, обучена на 120-дневном таргете.' },
+];
+const DEFAULT_HORIZON = 5;
+function horizonGroup(h) {
+  return HORIZON_GROUPS.find(g => g.horizons.includes(h)) || HORIZON_GROUPS[0];
+}
+/* Trading days → accusative calendar phrase with the right adjective form
+   so it reads naturally after "за" (e.g. "за ближайшую неделю" /
+   "за ближайшие полтора месяца"). */
+function humanHorizon(tradingDays) {
+  if (tradingDays <= 5)   return 'ближайшую неделю';
+  if (tradingDays <= 10)  return 'ближайшие две недели';
+  if (tradingDays <= 30)  return 'ближайшие полтора месяца';
+  if (tradingDays <= 60)  return 'ближайшие три месяца';
+  if (tradingDays <= 120) return 'ближайшие полгода';
+  if (tradingDays <= 240) return 'ближайший год';
+  return 'ближайшие полтора года';
+}
+/* Same horizon, without the leading "ближайший(е)" — used in section
+   headers like "Срок: ближайшую неделю" sounds odd, prefer "Срок: неделя". */
+function humanHorizonBare(tradingDays) {
+  if (tradingDays <= 5)   return 'неделя';
+  if (tradingDays <= 10)  return 'две недели';
+  if (tradingDays <= 30)  return 'полтора месяца';
+  if (tradingDays <= 60)  return 'три месяца';
+  if (tradingDays <= 120) return 'полгода';
+  if (tradingDays <= 240) return 'год';
+  return 'полтора года';
+}
+const RU_MONTHS = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function fmtRuDate(iso) {
+  if (!iso) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) return iso;
+  return `${parseInt(m[3],10)} ${RU_MONTHS[parseInt(m[2],10)-1]} ${m[1]}`;
+}
+
+/* ── BASE PRICES (правдоподобные цены в рублях) ──────────────── */
+const BASE_PRICES = {
+  SBER:280, GAZP:150, LKOH:6800, ROSN:580, GMKN:14500, NVTK:1050,
+  YNDX:3500, MTSS:320, MGNT:5200, FIVE:2800, PLZL:12000, POLY:450,
+  ALRS:70, CHMF:1500, NLMK:220, MAGN:55, VTBR:0.023, MOEX:220,
+  PHOR:6500, RUAL:38, OZON:3200, VKCO:320, IRAO:3.8, FEES:0.19,
+  HYDR:0.69, RTKM:95, AFLT:55, PIKK:750, SMLT:1800, SGZH:4.5,
+  MTLR:260, AFKS:17, CBOM:8.5, TATN:720, SNGS:32, BANE:2000,
+  TRNFP:1500, NMTP:12.5, FLOT:140, UWGN:85, TCSG:3000, FIXP:220,
+  ENPG:420, DSKY:71, LENT:1200, RASP:320, SELG:65, POGR:3.2,
+  BSPB:360, AQUA:850, RNFT:560, MSNG:2.5, LSRG:850, RENI:100,
+};
+
+/* форматирование цены в зависимости от величины */
+function fmtPrice(p) {
+  if(p < 0.1)  return p.toFixed(4);
+  if(p < 1)    return p.toFixed(3);
+  if(p < 10)   return p.toFixed(2);
+  if(p < 100)  return p.toFixed(1);
+  return Math.round(p).toLocaleString('ru-RU');
+}
+
+/* дневное изменение — стабильно для тикера (обновляется раз в «день» = seed по дате) */
+function getDayChange(ticker) {
+  const dateSeed = new Date().toDateString().split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  const tickSeed = ticker.split('').reduce((a,c)=>a+c.charCodeAt(0),0);
+  const rng = seededRand(dateSeed * tickSeed + 31337);
+  return +((rng()*6 - 3).toFixed(2)); // -3% .. +3%
+}
+
+const LOADING_MSGS = [
+  'Загружаем котировки...',
+  'Анализируем тренды...',
+  'Считаем вероятности...',
+  'Формируем прогноз...',
+];
+
+const FACTOR_NAMES = [
+  { key:'volatility',  label:'Волатильность',       desc:'уровень риска'           },
+  { key:'trend',       label:'Ценовой тренд',        desc:'направление движения'    },
+  { key:'volume',      label:'Объём торгов',         desc:'рыночная активность'     },
+  { key:'dividend',    label:'Дивидендная доходность',desc:'выплаты акционерам'     },
+  { key:'imoex',       label:'Индекс IMOEX',         desc:'состояние рынка'         },
+  { key:'usd',         label:'Курс доллара',         desc:'валютный фактор'         },
+];
+
+/* ── SEEDED RNG ───────────────────────────────────────────────── */
+function seededRand(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
+}
+
+/* ── CLIENT-SIDE INFERENCE ────────────────────────────────────── */
+
+/* Shared promises so we don't reload meta/weights on every forecast. */
+let _metaPromise = null;
+let _weightPromises = {};
+
+function ensureMeta() {
+  if (!_metaPromise) _metaPromise = TCN.loadMeta(ASSETS_BASE);
+  return _metaPromise;
+}
+function ensureGroup(group) {
+  if (!_weightPromises[group]) _weightPromises[group] = TCN.loadGroup(group, ASSETS_BASE);
+  return _weightPromises[group];
+}
+
+function isoDate(d) {
+  const dt = new Date(d);
+  return dt.toISOString().slice(0,10);
+}
+
+/* Calibrated 5-level verdict from signal_score = prob_up − adaptive_threshold.
+   Per training (pos_rate / adaptive_threshold):
+     short  P(rise≥+3%/5d)   20.7% / 0.193
+     medium P(rise≥+5%/30d)  32.1% / 0.242
+     long   P(rise≥+12%/120d) 32.6% / 0.308
+   Bands (in probability points, NOT percent):
+       ≥ +0.08   strong-up    Сильно выше нормы
+       ≥ +0.03   up           Выше нормы
+     |  | < 0.03 neutral      Нейтрально
+       ≤ −0.03   down         Ниже нормы
+       ≤ −0.08   strong-down  Сильно ниже нормы
+   We never write "price will fall" — the model only learns the upside event. */
+const SIGNAL_BANDS = {
+  strongUp: 0.08,
+  up:       0.03,
+};
+function classifySignal(prob_up, adaptive) {
+  const score = prob_up - adaptive;
+  if (score >=  SIGNAL_BANDS.strongUp)   return { key: 'strong-up',   label: 'Сильно выше нормы',  score };
+  if (score >=  SIGNAL_BANDS.up)         return { key: 'up',          label: 'Выше нормы',         score };
+  if (score <= -SIGNAL_BANDS.strongUp)   return { key: 'strong-down', label: 'Сильно ниже нормы',  score };
+  if (score <= -SIGNAL_BANDS.up)         return { key: 'down',        label: 'Ниже нормы',         score };
+  return                                       { key: 'neutral',     label: 'Нейтрально',         score };
+}
+
+/* Plain-language phrasing for non-technical users (diploma audience).
+   One sentence per level — combines observation with comparison so we don't
+   repeat the same idea in two adjacent paragraphs. The colored level label
+   is already shown in the verdict heading above; no second heading here. */
+const PLAIN_TEXTS = {
+  'strong-up':   { body: 'Модель видит признаки сильного роста на этом сроке — шанс заметно выше обычного для этой акции.' },
+  'up':          { body: 'Модель видит лёгкий перевес в сторону роста — шанс чуть выше обычного для этой акции на таком сроке.' },
+  'neutral':     { body: 'Модель не видит ничего особенного — шанс быстрого роста примерно такой же, как обычно у этой акции.' },
+  'down':        { body: 'Сигналов к сильному росту сейчас меньше обычного. Это не предсказание падения — модель оценивает только шанс роста.' },
+  'strong-down': { body: 'Модель не видит признаков сильного роста на этом сроке — шанс заметно ниже обычного для этой акции. Это не значит, что цена упадёт.' },
+};
+function buildVerdict(prob_up, out, name, sectorLabel, horizon) {
+  const prob_pct = Math.round(prob_up * 100);
+  const adaptive = (out.adaptive_threshold != null) ? out.adaptive_threshold : 0.5;
+  const pos_rate = (out.pos_rate != null) ? out.pos_rate : null;
+  const thr_pct = Math.round(out.threshold * 100);
+  const horizon_word = horizon === 1 ? '1 торгового дня' : `${horizon} торговых дней`;
+  const is_proxy = horizon !== out.trained_on;
+  const trained_word = `${out.trained_on} торговых дней`;
+  const target_phrase = `вырастет на ≥ +${thr_pct}% за ${trained_word}`;
+  const target_phrase_inf = `роста ≥ +${thr_pct}% за ${trained_word}`;
+  const proxy_note = is_proxy
+    ? ` (запрошенный горизонт ${horizon_word} обслуживает та же модель, обученная на ${trained_word})`
+    : '';
+  const base_note = (pos_rate != null)
+    ? `На обучении такое событие случалось в ${Math.round(pos_rate * 100)}% случаев, адаптивный порог модели ${adaptive.toFixed(2)}.`
+    : `Адаптивный порог модели ${adaptive.toFixed(2)}.`;
+
+  const sig = classifySignal(prob_up, adaptive);
+  const deviation_pp = sig.score * 100;
+  const deviation_str = (deviation_pp >= 0 ? '+' : '') + deviation_pp.toFixed(1) + ' п.п.';
+
+  const headline = (function () {
+    switch (sig.key) {
+      case 'strong-up':
+        return `Сильно выше нормы — модель оценивает шанс ${target_phrase_inf} заметно выше обычного (${deviation_str} к адаптивному порогу).`;
+      case 'up':
+        return `Выше нормы — модель видит повышенный шанс ${target_phrase_inf} (${deviation_str} к адаптивному порогу).`;
+      case 'neutral':
+        return `Нейтрально — шанс ${target_phrase_inf} близок к историческому базовому уровню (${deviation_str} от порога).`;
+      case 'down':
+        return `Ниже нормы — модель оценивает шанс ${target_phrase_inf} ниже базового (${deviation_str} к порогу). Это не предсказание падения цены.`;
+      case 'strong-down':
+        return `Сильно ниже нормы — модель оценивает шанс ${target_phrase_inf} заметно ниже базового (${deviation_str} к порогу). Это не предсказание падения цены.`;
+    }
+  })();
+
+  const explanation =
+    `Модель TCN оценивает вероятность того, что ${name} ${target_phrase}, в ${prob_pct}%${proxy_note}. ` +
+    `${base_note} Отклонение от порога: ${deviation_str}. Сектор «${sectorLabel}». ` +
+    `Прогноз не предсказывает падение цены — только превышение порога роста.`;
+
+  const plain = PLAIN_TEXTS[sig.key];
+  const base_pct = (pos_rate != null) ? Math.round(pos_rate * 100) : null;
+  const cal_phrase = humanHorizon(out.trained_on);
+  /* compareLine: plain-Russian "X из 100 случаев, обычно — Y из 100".
+     Calendar-day phrasing (e.g. "за полтора месяца"), no "≥", no "trading days". */
+  const compareLine = (base_pct != null)
+    ? `Сейчас модель оценивает шанс в ${prob_pct} из 100 случаев. Обычно для такой акции за ${cal_phrase} это случается в ${base_pct} из 100 случаев.`
+    : `Сейчас модель оценивает шанс в ${prob_pct} из 100 случаев.`;
+  /* plainCaption: replaces the ≥/trading-days line under the big probability. */
+  const plainCaption =
+    `шанс, что цена вырастет хотя бы на ${thr_pct}% за ${cal_phrase}`;
+
+  return {
+    verdict: sig.label,
+    verdictColor: sig.key,
+    explanation,
+    headline,
+    plainBody:  plain.body,
+    plainCompare: compareLine,
+    plainCaption,
+    prob_pct,
+    signalScore: sig.score,
+    signalKey: sig.key,
+  };
+}
+
+async function fetchForecast(ticker, horizon, company) {
+  const sectorLabel = (SECTORS[company.sector] || {}).label || '';
+
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+
+  // Run network + weight load in parallel.
+  const [_, data] = await Promise.all([
+    ensureGroup(group),
+    TCN.fetchAllForTicker(ticker),
+  ]);
+
+  if (!data.price.dates || data.price.dates.length < 60) {
+    throw new Error(`Недостаточно истории по тикеру ${ticker} на MOEX (получено ${data.price.dates.length} баров).`);
+  }
+
+  const fres = TCN.buildFeatures({
+    dates: data.price.dates,
+    close: data.price.close,
+    high: data.price.high,
+    low: data.price.low,
+    volume: data.price.volume,
+    usd: null,                      // CBR has no CORS; зануляем (fallback as in training).
+    imoex: data.imoex.dates.length ? data.imoex : null,
+    div:   data.divs.dates.length  ? data.divs  : null,
+  });
+
+  if (fres.matrix.length < TCN.SEQ_LEN) {
+    throw new Error(`После feature engineering осталось ${fres.matrix.length} строк (< ${TCN.SEQ_LEN}). Возможно, тикер торгуется недавно или MOEX вернул мало баров.`);
+  }
+
+  const out = TCN.predict(fres.matrix, horizon);
+  // Clamp probabilities away from 0/1 to avoid 0% / 100% labels.
+  const prob_up = Math.min(1 - 1e-6, Math.max(1e-6, out.prob_up));
+
+  /* Seed the ranking cache so buildRanking() doesn't re-fetch this same ticker. */
+  try {
+    const cacheKey = `tcn_rank_v1_${ticker}_${out.group}`;
+    _rankingMem[cacheKey] = prob_up;
+    localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), prob_up }));
+  } catch (_) {}
+
+  const last_close = data.price.close[data.price.close.length - 1];
+  const last_date = isoDate(data.price.dates[data.price.dates.length - 1]);
+  const day_change = data.price.close.length > 1
+    ? (data.price.close[data.price.close.length - 1] / data.price.close[data.price.close.length - 2] - 1) * 100
+    : 0;
+
+  /* Expected upside conditional on the threshold being hit (prob_up * threshold).
+     We deliberately do NOT make this negative when prob_up < 0.5 — the model
+     does not predict downside, only upside threshold crossing. */
+  const expected_upside_pct = prob_up * out.threshold * 100;
+  const projected_price = last_close * (1 + prob_up * out.threshold);
+
+  /* Confidence = |prob_up − adaptive_threshold| / max gap; how far the signal is
+     from the per-model neutral level. */
+  const adaptive = out.adaptive_threshold != null ? out.adaptive_threshold : 0.5;
+  const max_gap = Math.max(adaptive, 1 - adaptive);
+  const conf_val = Math.round(Math.min(1, Math.abs(prob_up - adaptive) / max_gap) * 100);
+  const confidence = conf_val > 65 ? 'высокий' : (conf_val > 35 ? 'средний' : 'низкий');
+
+  const v = buildVerdict(prob_up, out, company.name, sectorLabel, horizon);
+  const factors = TCN.buildFactors(fres.matrix[fres.matrix.length - 1]);
+
+  // Real 30-bar tail of close prices for the mini-chart.
+  const tail = data.price.close.slice(-30);
+  while (tail.length < 30) tail.unshift(tail[0]);
+
+  const is_proxy = horizon !== out.trained_on;
+  const groupLabel = out.group_label || `Сигнал — модель ${out.trained_on} дней`;
+  const modelNote =
+    `${groupLabel}. Модель оценивает вероятность роста цены на ≥ +${Math.round(out.threshold * 100)}% ` +
+    `за ${out.trained_on} торговых дней. ` +
+    (is_proxy
+      ? `Кнопка «${horizon} дней» использует ту же модель — это приближённый сигнал, не точный прогноз на ${horizon} дней.`
+      : `Точный горизонт обучения.`) +
+    ` Базовая частота на тренировке: ${Math.round(out.pos_rate * 100)}%, адаптивный порог: ${out.adaptive_threshold.toFixed(2)}.`;
+
+  return {
+    prob: v.prob_pct,
+    verdict: v.verdict,
+    verdictColor: v.verdictColor,
+    confidence,
+    confVal: conf_val,
+    auc: 0.62,
+    factors,
+    explanation: v.explanation,
+    headline: v.headline,
+    plainBody: v.plainBody,
+    plainCompare: v.plainCompare,
+    plainCaption: v.plainCaption,
+    currentPrice: last_close,
+    projectedPrice: projected_price,
+    projPctStr: '+' + expected_upside_pct.toFixed(2) + '%',
+    pctChange: expected_upside_pct,
+    chartPts: tail,
+    dayChange: day_change,
+    lastBarDate: last_date,
+    modelNote,
+    horizonDays: horizon,
+    modelGroup: out.group,
+    groupLabel: groupLabel,
+    trainedOn: out.trained_on,
+    posRate: out.pos_rate,
+    adaptiveThreshold: out.adaptive_threshold,
+    threshold: out.threshold,
+    signalScore: v.signalScore,
+    signalKey: v.signalKey,
+    barsUsed: fres.matrix.length,
+    dataSource: data.source || 'live',
+    snapshotInfo: data.snapshotInfo || null,
+  };
+}
+
+/* Lightweight predict for ranking — only needs prob_up and signalScore.
+   Used by the Top-5 rating across all companies. Reuses the same
+   feature pipeline and model weights. Caches per-ticker raw output in
+   localStorage with a 1-hour TTL to avoid hammering MOEX. */
+const RANKING_TTL_MS = 60 * 60 * 1000;
+const _rankingMem = {};
+async function predictForRanking(ticker, horizon) {
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+  const cacheKey = `tcn_rank_v1_${ticker}_${group}`;
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const { ts, prob_up } = JSON.parse(raw);
+      if (Date.now() - ts < RANKING_TTL_MS && typeof prob_up === 'number') {
+        _rankingMem[cacheKey] = prob_up;
+        return { prob_up, group };
+      }
+    }
+  } catch (_) {}
+  if (_rankingMem[cacheKey] != null) {
+    return { prob_up: _rankingMem[cacheKey], group };
+  }
+  await ensureGroup(group);
+  const data = await TCN.fetchAllForTicker(ticker);
+  if (!data.price.dates || data.price.dates.length < 60) {
+    throw new Error(`мало истории по ${ticker}`);
+  }
+  const fres = TCN.buildFeatures({
+    dates: data.price.dates,
+    close: data.price.close,
+    high:  data.price.high,
+    low:   data.price.low,
+    volume: data.price.volume,
+    usd:   null,
+    imoex: data.imoex.dates.length ? data.imoex : null,
+    div:   data.divs.dates.length  ? data.divs  : null,
+  });
+  if (fres.matrix.length < TCN.SEQ_LEN) {
+    throw new Error(`недостаточно фичей для ${ticker}`);
+  }
+  const out = TCN.predict(fres.matrix, horizon);
+  const prob_up = Math.min(1 - 1e-6, Math.max(1e-6, out.prob_up));
+  _rankingMem[cacheKey] = prob_up;
+  try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), prob_up })); } catch (_) {}
+  return { prob_up, group };
+}
+
+/* Build the full ranking for all companies for a given horizon.
+   Runs in parallel batches to keep UI responsive. Returns an array
+   sorted by signal_score desc, with absent tickers omitted. */
+async function buildRanking(horizon, companies, onProgress) {
+  const meta = await ensureMeta();
+  const group = TCN.horizonToGroup(horizon);
+  const adaptive = meta.horizon_groups[group].adaptive_threshold;
+  const pos_rate = meta.horizon_groups[group].pos_rate;
+  const thr = meta.horizon_groups[group].thr;
+
+  const BATCH = 3;
+  const result = [];
+  let done = 0;
+  for (let i = 0; i < companies.length; i += BATCH) {
+    if (i > 0) await new Promise(res => setTimeout(res, 120));
+    const slice = companies.slice(i, i + BATCH);
+    const settled = await Promise.allSettled(
+      slice.map(c => predictForRanking(c.ticker, horizon).then(r => ({ company: c, prob_up: r.prob_up })))
+    );
+    for (const s of settled) {
+      if (s.status === 'fulfilled') {
+        const { company, prob_up } = s.value;
+        const score = prob_up - adaptive;
+        const sig = classifySignal(prob_up, adaptive);
+        result.push({
+          ticker: company.ticker,
+          name: company.name,
+          sector: company.sector,
+          prob_up,
+          prob_pct: Math.round(prob_up * 100),
+          score,
+          deviation_pp: score * 100,
+          signalKey: sig.key,
+          signalLabel: sig.label,
+        });
+      }
+    }
+    done += slice.length;
+    if (onProgress) onProgress(Math.min(done, companies.length), companies.length);
+  }
+  result.sort((a, b) => b.score - a.score);
+  return { ranking: result, group, adaptive, pos_rate, thr };
+}
+
+/* ── MINI CHART ───────────────────────────────────────────────── */
+function MiniChart({points, color}) {
+  const W=340, H=72, PAD=4;
+  const min = Math.min(...points), max = Math.max(...points);
+  const range = max - min || 1;
+  const xs = points.map((_,i)=>PAD + (i/(points.length-1))*(W-PAD*2));
+  const ys = points.map(p=>PAD + (1-(p-min)/range)*(H-PAD*2));
+  const pathD = xs.map((x,i)=>`${i===0?'M':'L'}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  const areaD = pathD + ` L${xs[xs.length-1].toFixed(1)},${H} L${xs[0].toFixed(1)},${H} Z`;
+  const isUp = points[points.length-1] >= points[0];
+  const lineColor = isUp ? '#4ade80' : '#f87171';
+  const gradId = `cg${Math.round(points[0])}`;
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{display:'block',borderRadius:8,overflow:'visible'}}>
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={lineColor} stopOpacity="0.18"/>
+          <stop offset="100%" stopColor={lineColor} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill={`url(#${gradId})`}/>
+      <path d={pathD} fill="none" stroke={lineColor} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      {/* last dot */}
+      <circle cx={xs[xs.length-1]} cy={ys[ys.length-1]} r="3" fill={lineColor}/>
+    </svg>
+  );
+}
+
+/* ── PARTICLES ────────────────────────────────────────────────── */
+function ParticlesCanvas() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let raf, w, h;
+    const pts = [];
+    const resize = () => {
+      w = canvas.width = canvas.offsetWidth;
+      h = canvas.height = canvas.offsetHeight;
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    for(let i=0;i<80;i++){
+      pts.push({
+        x:Math.random()*1400, y:Math.random()*800,
+        vx:(Math.random()-0.5)*0.3, vy:(Math.random()-0.5)*0.3,
+        r:Math.random()*1.6+0.4,
+        a:Math.random()*Math.PI*2,
+        color: Math.random()>0.5 ? [124,58,237] : [6,182,212]
+      });
+    }
+    const draw = () => {
+      ctx.clearRect(0,0,w,h);
+      pts.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.a+=0.008;
+        if(p.x<0)p.x=w; if(p.x>w)p.x=0;
+        if(p.y<0)p.y=h; if(p.y>h)p.y=0;
+        const o = 0.3+0.2*Math.sin(p.a);
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctx.fillStyle=`rgba(${p.color[0]},${p.color[1]},${p.color[2]},${o})`;
+        ctx.fill();
+      });
+      // connections
+      for(let i=0;i<pts.length;i++){
+        for(let j=i+1;j<pts.length;j++){
+          const dx=pts[i].x-pts[j].x, dy=pts[i].y-pts[j].y;
+          const d=Math.sqrt(dx*dx+dy*dy);
+          if(d<100){
+            ctx.beginPath();
+            ctx.moveTo(pts[i].x,pts[i].y);
+            ctx.lineTo(pts[j].x,pts[j].y);
+            ctx.strokeStyle=`rgba(124,58,237,${0.08*(1-d/100)})`;
+            ctx.lineWidth=0.5;
+            ctx.stroke();
+          }
+        }
+      }
+      raf=requestAnimationFrame(draw);
+    };
+    draw();
+    return ()=>{ cancelAnimationFrame(raf); window.removeEventListener('resize',resize); };
+  },[]);
+  return <canvas ref={canvasRef} id="particles-canvas" style={{width:'100%',height:'100%'}}/>;
+}
+
+/* ── NAV ──────────────────────────────────────────────────────── */
+function Nav({onNav}) {
+  const links = [
+    {label:'Главная',href:'#hero'},
+    {label:'Компании',href:'#catalog'},
+    {label:'Прогноз',href:'#forecast'},
+    {label:'О проекте',href:'#about'},
+  ];
+  return (
+    <nav style={{height:60}}>
+      <div style={{maxWidth:1200,margin:'0 auto',padding:'0 24px',height:'100%',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:28,height:28,borderRadius:8,background:'linear-gradient(135deg,#7c3aed,#06b6d4)',display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><polyline points="1,10 4,6 7,8 10,3 13,5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <span style={{fontWeight:700,fontSize:15,letterSpacing:'-0.02em',color:'#f1f5f9'}}>StockAI</span>
+          <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.3)',marginLeft:4}}>RU</span>
+        </div>
+        <div style={{display:'flex',gap:4}}>
+          {links.map(l=>(
+            <a key={l.href} href={l.href} onClick={e=>{e.preventDefault();onNav(l.href)}}
+              style={{padding:'6px 14px',borderRadius:8,fontSize:14,color:'rgba(255,255,255,0.6)',textDecoration:'none',transition:'all 0.2s'}}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.06)';e.currentTarget.style.color='#f1f5f9'}}
+              onMouseLeave={e=>{e.currentTarget.style.background='transparent';e.currentTarget.style.color='rgba(255,255,255,0.6)'}}>
+              {l.label}
+            </a>
+          ))}
+        </div>
+      </div>
+    </nav>
+  );
+}
+
+/* ── HERO ─────────────────────────────────────────────────────── */
+function Hero({onStart}) {
+  return (
+    <section id="hero" style={{position:'relative',minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+      <div className="hero-glow" style={{position:'absolute',inset:0,zIndex:0}}/>
+      <ParticlesCanvas/>
+      <div style={{position:'relative',zIndex:1,textAlign:'center',maxWidth:760,padding:'0 24px'}}>
+        <div className="animate-fade-up" style={{
+          display:'inline-flex',alignItems:'center',gap:8,
+          padding:'6px 16px',borderRadius:999,marginBottom:32,
+          background:'rgba(124,58,237,0.12)',border:'1px solid rgba(124,58,237,0.3)',
+        }}>
+          <div style={{width:6,height:6,borderRadius:'50%',background:'#7c3aed',boxShadow:'0 0 8px #7c3aed'}}/>
+          <span style={{fontSize:13,color:'#c4b5fd',fontWeight:600,letterSpacing:'0.04em'}}>TCN NEURAL NETWORK · MOEX DATA</span>
+        </div>
+        <h1 className="animate-fade-up-2" style={{
+          fontFamily:'Manrope',fontWeight:800,
+          fontSize:'clamp(38px,7vw,72px)',
+          lineHeight:1.1,letterSpacing:'-0.03em',
+          marginBottom:24,
+        }}>
+          <span className="grad-text">Прогноз акций</span><br/>
+          <span style={{color:'#f1f5f9'}}>российского рынка</span>
+        </h1>
+        <p className="animate-fade-up-3" style={{fontSize:'clamp(15px,2.2vw,18px)',color:'rgba(255,255,255,0.55)',lineHeight:1.65,marginBottom:40,maxWidth:560,margin:'0 auto 40px'}}>
+          Три TCN-сети, обученные на данных ММВБ за 10+ лет.<br/>Анализируем 28 показателей — даём понятный результат.
+        </p>
+        <div className="animate-fade-up-4" style={{display:'flex',gap:12,justifyContent:'center',flexWrap:'wrap'}}>
+          <button onClick={onStart} style={{
+            padding:'14px 32px',borderRadius:12,fontSize:16,fontWeight:700,cursor:'pointer',
+            background:'linear-gradient(135deg,#7c3aed,#5b21b6)',
+            color:'white',border:'none',
+            boxShadow:'0 0 32px rgba(124,58,237,0.4)',
+            transition:'all 0.25s cubic-bezier(0.16,1,0.3,1)',fontFamily:'Manrope',
+          }}
+          onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-2px) scale(1.03)';e.currentTarget.style.boxShadow='0 8px 40px rgba(124,58,237,0.55)'}}
+          onMouseLeave={e=>{e.currentTarget.style.transform='none';e.currentTarget.style.boxShadow='0 0 32px rgba(124,58,237,0.4)'}}>
+            Начать анализ →
+          </button>
+          <a href="#about" onClick={e=>{e.preventDefault();document.querySelector('#about')?.scrollIntoView({behavior:'smooth'})}}
+            style={{
+              padding:'14px 28px',borderRadius:12,fontSize:15,fontWeight:600,cursor:'pointer',
+              background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.7)',
+              border:'1px solid rgba(255,255,255,0.1)',textDecoration:'none',
+              transition:'all 0.25s',fontFamily:'Manrope',display:'inline-flex',alignItems:'center',
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.09)';e.currentTarget.style.color='white'}}
+            onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.05)';e.currentTarget.style.color='rgba(255,255,255,0.7)'}}>
+            О методологии
+          </a>
+        </div>
+        {/* Stats row */}
+        <div style={{display:'flex',gap:32,justifyContent:'center',marginTop:64,flexWrap:'wrap'}}>
+          {[['54','компании'],['10+','лет данных'],['28','показателей']].map(([n,l])=>(
+            <div key={l} style={{textAlign:'center'}}>
+              <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:28,color:'#c4b5fd'}}>{n}</div>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginTop:2}}>{l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Scroll indicator */}
+      <div style={{position:'absolute',bottom:32,left:'50%',transform:'translateX(-50%)',display:'flex',flexDirection:'column',alignItems:'center',gap:6,opacity:0.4}}>
+        <span style={{fontSize:11,letterSpacing:'0.1em',color:'rgba(255,255,255,0.5)'}}>SCROLL</span>
+        <div style={{width:1,height:32,background:'linear-gradient(to bottom,rgba(255,255,255,0.4),transparent)'}}/>
+      </div>
+    </section>
+  );
+}
+
+/* ── COMPANY CARD ─────────────────────────────────────────────── */
+function CompanyCard({company, onSelect}) {
+  const sec = SECTORS[company.sector];
+  const [hovered,setHovered] = useState(false);
+  const basePrice = BASE_PRICES[company.ticker] || 100;
+  const dayChange = getDayChange(company.ticker);
+  const currentPrice = +(basePrice * (1 + dayChange/100));
+  const isUp = dayChange >= 0;
+  return (
+    <div className="company-card glass" onClick={()=>onSelect(company)}
+      onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)}
+      style={{
+        padding:'18px 16px',borderRadius:16,cursor:'pointer',
+        boxShadow: hovered
+          ? `0 8px 32px rgba(0,0,0,0.5),0 0 24px ${sec.color}33`
+          : '0 4px 16px rgba(0,0,0,0.3)',
+        borderColor: hovered ? `${sec.color}55` : 'rgba(255,255,255,0.08)',
+        background: hovered ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
+      }}>
+      {/* row 1: ticker + sector */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:6}}>
+        <span style={{
+          fontFamily:'JetBrains Mono',fontWeight:700,fontSize:16,
+          color: hovered ? sec.color : '#f1f5f9',transition:'color 0.25s',letterSpacing:'0.02em',
+        }}>{company.ticker}</span>
+        <div style={{
+          padding:'3px 8px',borderRadius:99,fontSize:10,fontWeight:600,
+          background: sec.bg, color: sec.color,
+          border:`1px solid ${sec.color}33`,
+          transition:'all 0.25s',
+          boxShadow: hovered ? `0 0 10px ${sec.color}33` : 'none',
+        }}>{sec.label}</div>
+      </div>
+      {/* row 2: company name */}
+      <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',lineHeight:1.35,fontWeight:500,marginBottom:10}}>{company.name}</div>
+      {/* row 3: price + change */}
+      <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between'}}>
+        <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:15,color:'#f1f5f9',letterSpacing:'-0.01em'}}>
+          {fmtPrice(currentPrice)} ₽
+        </span>
+        <span style={{
+          fontFamily:'JetBrains Mono',fontWeight:600,fontSize:12,
+          color: isUp ? '#4ade80' : '#f87171',
+          background: isUp ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          padding:'2px 7px',borderRadius:99,
+        }}>
+          {isUp?'+':''}{dayChange.toFixed(2)}%
+        </span>
+      </div>
+      <div style={{marginTop:10,height:2,borderRadius:1,background:`linear-gradient(to right,${sec.color}${hovered?'99':'33'},transparent)`,transition:'all 0.3s'}}/>
+    </div>
+  );
+}
+
+/* ── CATALOG ──────────────────────────────────────────────────── */
+function Catalog({onSelect}) {
+  const [search,setSearch] = useState('');
+  const [activeSector,setActiveSector] = useState('all');
+
+  const sectorCounts = useMemo(()=>{
+    const c={all:COMPANIES.length};
+    COMPANIES.forEach(co=>{c[co.sector]=(c[co.sector]||0)+1});
+    return c;
+  },[]);
+
+  const filtered = useMemo(()=>COMPANIES.filter(c=>{
+    const matchSector = activeSector==='all'||c.sector===activeSector;
+    const q=search.toLowerCase();
+    const matchSearch = !q||c.ticker.toLowerCase().includes(q)||c.name.toLowerCase().includes(q);
+    return matchSector&&matchSearch;
+  }),[search,activeSector]);
+
+  const sectorTabs = [['all','Все',null],...Object.entries(SECTORS).map(([k,v])=>[k,v.label,v.color])];
+
+  return (
+    <section id="catalog" style={{padding:'100px 0 80px',minHeight:'100vh'}}>
+      <div style={{maxWidth:1200,margin:'0 auto',padding:'0 24px'}}>
+        <div style={{textAlign:'center',marginBottom:48}}>
+          <h2 style={{fontFamily:'Manrope',fontWeight:800,fontSize:'clamp(28px,4vw,44px)',letterSpacing:'-0.03em',color:'#f1f5f9',marginBottom:14}}>
+            Выберите <span className="grad-text">компанию</span>
+          </h2>
+          <p style={{color:'rgba(255,255,255,0.45)',fontSize:16}}>{COMPANIES.length} компаний Московской биржи</p>
+        </div>
+
+        {/* Search */}
+        <div style={{maxWidth:520,margin:'0 auto 28px',position:'relative'}}>
+          <svg style={{position:'absolute',left:16,top:'50%',transform:'translateY(-50%)',opacity:0.4}} width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="6.5" cy="6.5" r="5" stroke="white" strokeWidth="1.5"/>
+            <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Поиск по тикеру или названию..." className="glass"
+            style={{
+              width:'100%',padding:'13px 16px 13px 44px',borderRadius:12,
+              fontSize:15,color:'#f1f5f9',outline:'none',fontFamily:'Manrope',
+            }}/>
+        </div>
+
+        {/* Sector filters */}
+        <div style={{display:'flex',gap:8,marginBottom:32,flexWrap:'wrap',justifyContent:'center'}}>
+          {sectorTabs.map(([key,label,color])=>(
+            <button key={key} onClick={()=>setActiveSector(key)}
+              className={`sector-tab${activeSector===key?' active':''}`}
+              style={{
+                padding:'7px 14px',borderRadius:99,fontSize:13,fontWeight:600,cursor:'pointer',
+                fontFamily:'Manrope',transition:'all 0.2s',
+                background: activeSector===key ? (color?`${color}22`:'rgba(124,58,237,0.2)') : 'rgba(255,255,255,0.04)',
+                border: activeSector===key ? `1px solid ${color||'#7c3aed'}66` : '1px solid rgba(255,255,255,0.08)',
+                color: activeSector===key ? (color||'#c4b5fd') : 'rgba(255,255,255,0.5)',
+              }}>
+              {label} <span style={{opacity:0.5,fontSize:11,marginLeft:3}}>{sectorCounts[key]||0}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Grid */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:14}}>
+          {filtered.map(c=><CompanyCard key={c.ticker} company={c} onSelect={onSelect}/>)}
+          {filtered.length===0&&(
+            <div style={{gridColumn:'1/-1',textAlign:'center',padding:'60px 0',color:'rgba(255,255,255,0.3)',fontSize:16}}>
+              Ничего не найдено
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── PROGRESS BAR ─────────────────────────────────────────────── */
+function ProgressBar({value,color,animated}) {
+  const [width,setWidth] = useState(0);
+  useEffect(()=>{if(animated){const t=setTimeout(()=>setWidth(value),100);return()=>clearTimeout(t);}else{setWidth(value);}},[value,animated]);
+  return (
+    <div style={{height:6,borderRadius:99,background:'rgba(255,255,255,0.07)',overflow:'hidden'}}>
+      <div style={{height:'100%',borderRadius:99,width:`${width}%`,background:color||'#7c3aed',transition:'width 1.2s cubic-bezier(0.16,1,0.3,1)'}}/>
+    </div>
+  );
+}
+
+/* ── COUNTER ANIM ─────────────────────────────────────────────── */
+function AnimCounter({target}) {
+  const [val,setVal] = useState(0);
+  useEffect(()=>{
+    let start=0, raf;
+    const dur=1200, step=()=>{
+      start+=16;
+      const p=Math.min(start/dur,1);
+      const ease=1-Math.pow(1-p,4);
+      setVal(Math.round(ease*target));
+      if(p<1) raf=requestAnimationFrame(step);
+    };
+    const t=setTimeout(()=>{ raf=requestAnimationFrame(step); },200);
+    return()=>{clearTimeout(t);cancelAnimationFrame(raf);};
+  },[target]);
+  return <>{val}</>;
+}
+
+/* ── ANALYTICS PRIMITIVES ─────────────────────────────────────── */
+function AnalyticsMetric({label, value, hint, valueColor}) {
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:2,minWidth:0}}>
+      <div style={{fontSize:10,letterSpacing:'0.06em',fontWeight:600,color:'rgba(255,255,255,0.42)'}}>{(label||'').toUpperCase()}</div>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:18,color:valueColor||'#f1f5f9',letterSpacing:'-0.01em',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{value}</div>
+      {hint && <div style={{fontSize:11,color:'rgba(255,255,255,0.32)'}}>{hint}</div>}
+    </div>
+  );
+}
+
+const RANK_PILLS = {
+  'strong-up':  {label:'Сильно выше нормы',  bg:'rgba(34,197,94,0.16)',  color:'#4ade80'},
+  'up':         {label:'Выше нормы',          bg:'rgba(34,197,94,0.08)',  color:'#86efac'},
+  'neutral':    {label:'Нейтрально',          bg:'rgba(234,179,8,0.10)',  color:'#facc15'},
+  'down':       {label:'Ниже нормы',          bg:'rgba(249,115,22,0.10)', color:'#fb923c'},
+  'strong-down':{label:'Сильно ниже нормы',   bg:'rgba(239,68,68,0.14)',  color:'#f87171'},
+};
+
+function RankingRow({row, rank, highlighted}) {
+  const pill = RANK_PILLS[row.signalKey];
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'40px 1fr auto',
+      alignItems:'center',gap:14,
+      padding:'10px 14px',borderRadius:12,
+      background: highlighted ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.03)',
+      border:`1px solid ${highlighted ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.06)'}`,
+    }}>
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'rgba(255,255,255,0.45)'}}>#{rank}</div>
+      <div style={{minWidth:0}}>
+        <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:'#f1f5f9'}}>{row.ticker}</div>
+        {/* Single sub-line: "Название · уровень" — replaces the pill badge so
+            the row reads as one phrase, not as a tag + name. The level is
+            lower-cased and coloured to keep the visual hierarchy. */}
+        <div style={{fontSize:12,marginTop:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+          <span style={{color:'rgba(255,255,255,0.55)'}}>{row.name}</span>
+          <span style={{color:'rgba(255,255,255,0.35)'}}> · </span>
+          <span style={{color:pill.color,fontWeight:600}}>{pill.label.toLowerCase()}</span>
+        </div>
+      </div>
+      {/* Single right-hand column: probability "X%". The colored level pill
+          above already conveys "заметно выше / чуть ниже", so we drop
+          the "+X.X п.п." jargon column. */}
+      <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,color:pill.color,textAlign:'right'}}>{row.prob_pct}%</div>
+    </div>
+  );
+}
+
+function RankingPanel({ranking, group, adaptive, posRate, thrPct, currentTicker, progress, error, horizonLabel}) {
+  if (error) {
+    return (
+      <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginTop:16,background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)'}}>
+        <div style={{fontSize:13,fontWeight:700,color:'#f87171',marginBottom:6}}>Рейтинг не построен</div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.5)'}}>{error}</div>
+      </div>
+    );
+  }
+  if (!ranking || ranking.length === 0) {
+    const pct = progress ? Math.round((progress.done/progress.total)*100) : 0;
+    return (
+      <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginTop:16}}>
+        <div style={{fontSize:13,fontWeight:700,color:'rgba(255,255,255,0.7)',marginBottom:8}}>Строим рейтинг по всем компаниям…</div>
+        <div style={{height:6,borderRadius:99,background:'rgba(255,255,255,0.06)',overflow:'hidden'}}>
+          <div style={{height:'100%',width:`${pct}%`,background:'linear-gradient(to right,#7c3aed,#06b6d4)',transition:'width 0.3s'}}/>
+        </div>
+        {progress && (
+          <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginTop:6,fontFamily:'JetBrains Mono'}}>{progress.done} / {progress.total} тикеров</div>
+        )}
+      </div>
+    );
+  }
+  const top = ranking.slice(0, 5);
+  const bottom = ranking.slice(-5).slice().reverse();
+  const currentRank = ranking.findIndex(r => r.ticker === currentTicker);
+  const total = ranking.length;
+  const universe = COMPANIES.length;
+  const excluded = universe - total;
+  return (
+    <div className="glass" style={{borderRadius:16,padding:'24px',marginTop:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',gap:12,flexWrap:'wrap',marginBottom:16}}>
+        <div>
+          <div style={{fontSize:15,fontWeight:700,color:'#f1f5f9'}}>Сравнение компаний</div>
+          <div style={{fontSize:12,color:'rgba(255,255,255,0.5)',marginTop:3}}>
+            {horizonLabel} · {total} из {universe} компаний
+          </div>
+          {excluded > 0 && (
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',marginTop:4,fontStyle:'italic'}}>
+              {excluded} {excluded===1?'компания исключена':(excluded<5?'компании исключены':'компаний исключены')} из рейтинга: недостаточно актуальных торговых данных для модели
+            </div>
+          )}
+        </div>
+        {currentRank >= 0 && (
+          <div style={{
+            padding:'6px 12px',borderRadius:99,fontSize:12,fontWeight:700,
+            background:'rgba(124,58,237,0.18)',color:'#c4b5fd',border:'1px solid rgba(124,58,237,0.4)',
+            fontFamily:'JetBrains Mono',
+          }}>{currentTicker}: место {currentRank+1} из {total}</div>
+        )}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr',gap:24}}>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#86efac',marginBottom:10}}>У КАКИХ АКЦИЙ ШАНС РОСТА ВЫШЕ ОБЫЧНОГО</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {top.map((r,i)=>(
+              <RankingRow key={r.ticker} row={r} rank={i+1} highlighted={r.ticker===currentTicker}/>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:12,fontWeight:700,letterSpacing:'0.06em',color:'#fb923c',marginBottom:10}}>У КАКИХ АКЦИЙ ШАНС РОСТА НИЖЕ ОБЫЧНОГО</div>
+          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+            {bottom.map((r,i)=>(
+              <RankingRow key={r.ticker} row={r} rank={total-i} highlighted={r.ticker===currentTicker}/>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── FORECAST ─────────────────────────────────────────────────── */
+function Forecast({company}) {
+  const [horizon, setHorizon] = useState(DEFAULT_HORIZON);
+  const [loading,setLoading] = useState(false);
+  const [result,setResult] = useState(null);
+  const [error,setError] = useState(null);
+  const [loadMsg,setLoadMsg] = useState(0);
+  const [showAnalytics,setShowAnalytics] = useState(false);
+  const [ranking,setRanking] = useState(null);
+  const [rankingMeta,setRankingMeta] = useState(null);
+  const [rankingError,setRankingError] = useState(null);
+  const [rankingProgress,setRankingProgress] = useState(null);
+  const loadRef = useRef(null);
+  const rankingRunRef = useRef(0);
+
+  useEffect(()=>{ setResult(null); setShowAnalytics(false); setError(null); setHorizon(DEFAULT_HORIZON); },[company]);
+  useEffect(()=>{ setResult(null); setError(null); setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null); },[horizon]);
+
+  const doForecast = async () => {
+    setLoading(true); setResult(null); setShowAnalytics(false); setLoadMsg(0); setError(null);
+    setRanking(null); setRankingMeta(null); setRankingError(null); setRankingProgress(null);
+    let i=0;
+    loadRef.current = setInterval(()=>{
+      i++; setLoadMsg(i%LOADING_MSGS.length);
+    },2000);
+    const startedAt = Date.now();
+    let apiResult = null;
+    let apiError = null;
+    try {
+      apiResult = await fetchForecast(company.ticker, horizon, company);
+    } catch (e) {
+      apiError = e;
+    }
+    // Keep the loading animation visible for at least a few seconds.
+    const elapsed = Date.now() - startedAt;
+    const minLoading = 3500;
+    if (elapsed < minLoading) await new Promise(r=>setTimeout(r, minLoading - elapsed));
+    clearInterval(loadRef.current);
+    setLoading(false);
+    if (apiError) {
+      setError(apiError.message || String(apiError));
+      return;
+    }
+    setResult(apiResult);
+
+    /* Kick off ranking build in the background. We use a run-id so
+       stale results from a previous horizon/company never overwrite the
+       current view. The selected ticker is always pre-seeded into the
+       cache from the main forecast above (same group). */
+    const runId = ++rankingRunRef.current;
+    setRankingProgress({done: 0, total: COMPANIES.length});
+    try {
+      const r = await buildRanking(horizon, COMPANIES, (done, total) => {
+        if (rankingRunRef.current !== runId) return;
+        setRankingProgress({done, total});
+      });
+      if (rankingRunRef.current !== runId) return;
+      setRanking(r.ranking);
+      setRankingMeta({group: r.group, adaptive: r.adaptive, posRate: r.pos_rate, thr: r.thr});
+      const idx = r.ranking.findIndex(x => x.ticker === company.ticker);
+      if (idx >= 0) {
+        setResult(prev => prev ? ({...prev, rankPosition: idx+1, rankTotal: r.ranking.length}) : prev);
+      }
+    } catch (e) {
+      if (rankingRunRef.current !== runId) return;
+      setRankingError(e.message || String(e));
+    }
+  };
+
+  useEffect(()=>()=>clearInterval(loadRef.current),[]);
+
+  if(!company) return null;
+  const sec = SECTORS[company.sector];
+  const currentPrice = result ? result.currentPrice : +(( BASE_PRICES[company.ticker]||100) * (1 + getDayChange(company.ticker)/100));
+  const dayChange = getDayChange(company.ticker);
+  const isDayUp = dayChange >= 0;
+
+  const verdictStyles = {
+    /* 5-level signal-strength palette (signal_score = prob - adaptive_threshold) */
+    'strong-up':  {bg:'rgba(34,197,94,0.16)', border:'rgba(34,197,94,0.40)', color:'#4ade80'},
+    'up':         {bg:'rgba(34,197,94,0.08)', border:'rgba(34,197,94,0.22)', color:'#86efac'},
+    'neutral':    {bg:'rgba(234,179,8,0.10)', border:'rgba(234,179,8,0.25)', color:'#facc15'},
+    'down':       {bg:'rgba(249,115,22,0.10)',border:'rgba(249,115,22,0.25)',color:'#fb923c'},
+    'strong-down':{bg:'rgba(239,68,68,0.14)', border:'rgba(239,68,68,0.32)', color:'#f87171'},
+    /* Legacy 3-state aliases (kept for backward-compat with any cached state) */
+    success:{bg:'rgba(34,197,94,0.1)',border:'rgba(34,197,94,0.25)',color:'#4ade80'},
+    danger: {bg:'rgba(239,68,68,0.1)',border:'rgba(239,68,68,0.25)',color:'#f87171'},
+    warning:{bg:'rgba(234,179,8,0.1)',border:'rgba(234,179,8,0.25)',color:'#facc15'},
+  };
+
+  return (
+    <section id="forecast" style={{padding:'80px 0',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+      <div style={{maxWidth:800,margin:'0 auto',padding:'0 24px'}}>
+        {/* Header */}
+        <div className="glass" style={{borderRadius:20,padding:'24px 28px',marginBottom:28,display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+          <div style={{
+            width:52,height:52,borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,
+            background:`linear-gradient(135deg,${sec.color}22,${sec.color}44)`,border:`1px solid ${sec.color}44`,
+          }}>
+            <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:13,color:sec.color}}>{company.ticker.slice(0,2)}</span>
+          </div>
+          <div style={{flex:1,minWidth:140}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+              <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:20,color:'#f1f5f9',letterSpacing:'0.02em'}}>{company.ticker}</span>
+              <div style={{padding:'3px 10px',borderRadius:99,background:sec.bg,border:`1px solid ${sec.color}33`,fontSize:11,fontWeight:600,color:sec.color}}>{sec.label}</div>
+            </div>
+            <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginTop:2}}>{company.name}</div>
+          </div>
+          {/* Price block */}
+          <div style={{textAlign:'right'}}>
+            <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:28,color:'#f1f5f9',letterSpacing:'-0.02em',lineHeight:1}}>
+              {fmtPrice(currentPrice)} <span style={{fontSize:16,color:'rgba(255,255,255,0.4)',fontWeight:500}}>₽</span>
+            </div>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:6,marginTop:5}}>
+              <span style={{
+                fontFamily:'JetBrains Mono',fontWeight:600,fontSize:13,
+                color: isDayUp?'#4ade80':'#f87171',
+                background: isDayUp?'rgba(34,197,94,0.1)':'rgba(239,68,68,0.1)',
+                padding:'2px 9px',borderRadius:99,
+              }}>{isDayUp?'+':''}{dayChange.toFixed(2)}% сегодня</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Horizon picker */}
+        <div style={{marginBottom:28}}>
+          <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',marginBottom:12,fontWeight:600,letterSpacing:'0.04em'}}>ГОРИЗОНТ ПРОГНОЗА</div>
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            {HORIZON_GROUPS.map(group => {
+              const isActiveGroup = group.horizons.includes(horizon);
+              return (
+                <div key={group.key} style={{
+                  padding:'14px 18px',borderRadius:14,
+                  background: isActiveGroup ? 'rgba(124,58,237,0.12)' : 'rgba(255,255,255,0.03)',
+                  border:`1px solid ${isActiveGroup ? 'rgba(124,58,237,0.4)' : 'rgba(255,255,255,0.07)'}`,
+                  transition:'all 0.25s',
+                  boxShadow: isActiveGroup ? '0 0 18px rgba(124,58,237,0.18)' : 'none',
+                }}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap',marginBottom:10}}>
+                    <div>
+                      <div style={{fontSize:13,fontWeight:700,color:isActiveGroup?'#c4b5fd':'rgba(255,255,255,0.7)',letterSpacing:'0.04em'}}>
+                        {group.label.toUpperCase()} ГОРИЗОНТ
+                      </div>
+                      <div style={{fontSize:12,color:'rgba(255,255,255,0.45)',marginTop:2}}>
+                        порог +{group.thrPct}% · {group.desc}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                    {group.horizons.map(h => {
+                      const active = h === horizon;
+                      return (
+                        <button key={h} onClick={()=>setHorizon(h)} disabled={loading}
+                          style={{
+                            padding:'8px 16px',borderRadius:99,fontFamily:'JetBrains Mono',fontWeight:700,fontSize:14,
+                            cursor:loading?'default':'pointer',transition:'all 0.2s',
+                            background: active ? 'linear-gradient(135deg,#7c3aed,#5b21b6)' : 'rgba(255,255,255,0.04)',
+                            color: active ? '#fff' : 'rgba(255,255,255,0.7)',
+                            border: `1px solid ${active ? 'transparent' : 'rgba(255,255,255,0.08)'}`,
+                            boxShadow: active ? '0 4px 16px rgba(124,58,237,0.35)' : 'none',
+                            opacity: loading ? 0.6 : 1,
+                          }}>
+                          {h} {h === 1 ? 'день' : (h<5?'дня':'дней')}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Forecast button */}
+        <button onClick={doForecast} disabled={loading}
+          style={{
+            width:'100%',padding:'16px',borderRadius:14,fontSize:16,fontWeight:700,cursor:loading?'default':'pointer',
+            fontFamily:'Manrope',
+            background: loading ? 'rgba(124,58,237,0.15)' : 'linear-gradient(135deg,#7c3aed,#5b21b6)',
+            border: loading ? '1px solid rgba(124,58,237,0.3)' : 'none',
+            color: loading ? 'rgba(255,255,255,0.4)' : 'white',
+            transition:'all 0.3s',
+            boxShadow: loading ? 'none' : '0 4px 24px rgba(124,58,237,0.4)',
+          }}>
+          {loading ? 'Идёт анализ...' : 'Сделать прогноз'}
+        </button>
+
+        {/* Loading state */}
+        {loading && (
+          <div style={{marginTop:40,textAlign:'center',padding:'48px 32px',borderRadius:20}} className="glass">
+            <div style={{display:'flex',gap:4,justifyContent:'center',marginBottom:24,height:32,alignItems:'center'}}>
+              {[0,1,2,3,4].map(i=>(
+                <div key={i} className="load-bar" style={{
+                  width:4,height:32,borderRadius:3,
+                  background:'linear-gradient(to top,#7c3aed,#06b6d4)',
+                  animationDelay:`${i*0.12}s`,
+                }}/>
+              ))}
+            </div>
+            <div style={{fontSize:16,color:'rgba(255,255,255,0.7)',fontWeight:600,minHeight:24,transition:'all 0.4s'}}>
+              {LOADING_MSGS[loadMsg]}
+            </div>
+            <div style={{marginTop:12,fontSize:13,color:'rgba(255,255,255,0.3)'}}>
+              Горизонт: {horizon} торг. дней · Тикер: {company.ticker} · {horizonGroup(horizon).label.toLowerCase()} модель
+            </div>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && !loading && (
+          <div style={{marginTop:24,padding:'20px 24px',borderRadius:16,
+            background:'rgba(239,68,68,0.08)',border:'1px solid rgba(239,68,68,0.25)'}}>
+            <div style={{fontSize:14,fontWeight:700,color:'#f87171',marginBottom:6}}>Не удалось получить прогноз</div>
+            <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',lineHeight:1.55}}>{error}</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:8}}>Возможные причины: MOEX временно ограничивает запросы (попробуйте ещё раз через минуту) или у тикера слишком короткая история торгов.</div>
+          </div>
+        )}
+
+        {/* Result */}
+        {result && !loading && (
+          <div style={{marginTop:32,animation:'fade-up 0.6s cubic-bezier(0.16,1,0.3,1) both'}}>
+            {/* Verdict */}
+            <div className="glass" style={{
+              borderRadius:20,padding:'32px',marginBottom:16,
+              background: verdictStyles[result.verdictColor].bg,
+              borderColor: verdictStyles[result.verdictColor].border,
+              textAlign:'center',
+            }}>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)',letterSpacing:'0.06em',fontWeight:600,marginBottom:16}}>ВЕРДИКТ</div>
+              <div style={{fontSize:'clamp(22px,5vw,36px)',fontWeight:800,color:verdictStyles[result.verdictColor].color,fontFamily:'Manrope',letterSpacing:'-0.02em',marginBottom:24}}>
+                {result.verdict}
+              </div>
+              {/* Big probability — "X из 100" form. The "%" sign is replaced
+                  by a smaller "из 100" line so non-experts read it as a
+                  frequency, not a magic percent. */}
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',marginBottom:8}}>
+                <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:'clamp(52px,12vw,88px)',color:'#f1f5f9',letterSpacing:'-0.04em',lineHeight:1}}>
+                  <AnimCounter target={result.prob}/>
+                </span>
+                <span style={{fontFamily:'JetBrains Mono',fontSize:16,color:'rgba(255,255,255,0.45)',fontWeight:600,marginTop:4,letterSpacing:'0.04em'}}>
+                  из 100
+                </span>
+              </div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.55)',marginBottom:10,maxWidth:520,marginLeft:'auto',marginRight:'auto'}}>
+                {result.plainCaption}
+              </div>
+
+              {/* Key disclaimers — surfaced HIGH, not buried in a paragraph.
+                  Two short lines: what the number IS, and what it ISN'T. */}
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:2,fontStyle:'italic'}}>
+                Это шанс роста, а не предсказание падения.
+              </div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',marginBottom:0,fontStyle:'italic',maxWidth:560,marginLeft:'auto',marginRight:'auto'}}>
+                Если модель говорит {result.prob}% — это не значит, что на {100 - result.prob}% цена упадёт.
+              </div>
+
+              {/* PLAIN-LANGUAGE BLOCK — main result for a non-technical reader.
+                  One unified sentence (no separate heading) plus a comparison
+                  line vs the historical base rate. No "п.п.", no "adaptive". */}
+              {result.plainBody && (
+                <div style={{
+                  marginTop:24,padding:'20px 24px',borderRadius:14,
+                  background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',
+                  textAlign:'center',maxWidth:600,marginLeft:'auto',marginRight:'auto',
+                }}>
+                  <div style={{fontSize:15,color:'rgba(255,255,255,0.85)',lineHeight:1.55,marginBottom:result.plainCompare?12:0}}>
+                    {result.plainBody}
+                  </div>
+                  {result.plainCompare && (
+                    <div style={{
+                      marginTop:10,paddingTop:12,borderTop:'1px solid rgba(255,255,255,0.06)',
+                      fontSize:13,color:'rgba(255,255,255,0.6)',lineHeight:1.55,
+                    }}>
+                      {result.plainCompare}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {result.lastBarDate && (
+                <div style={{marginTop:14,fontSize:11,color:'rgba(255,255,255,0.35)'}}>
+                  Данные обновлены: {fmtRuDate(result.lastBarDate)}
+                  {result.dataSource === 'snapshot' && (
+                    <span style={{marginLeft:8,color:'rgba(255,200,120,0.7)'}}>
+                      · оффлайн-режим (свежие котировки недоступны)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Analytics block — collapsed by default. Diploma audience can
+                  expand to see the formal metrics (probability, base rate,
+                  adaptive threshold, deviation, signal strength). */}
+              {result.posRate != null && result.adaptiveThreshold != null && (
+                <div style={{marginTop:20}}>
+                  <button onClick={()=>setShowAnalytics(v=>!v)}
+                    style={{
+                      width:'100%',padding:'11px 16px',borderRadius:10,fontSize:13,fontWeight:600,cursor:'pointer',
+                      fontFamily:'Manrope',
+                      background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',
+                      color:'rgba(255,255,255,0.55)',transition:'all 0.2s',
+                      display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+                    }}
+                    onMouseEnter={e=>{e.currentTarget.style.background='rgba(255,255,255,0.08)';e.currentTarget.style.color='white'}}
+                    onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.04)';e.currentTarget.style.color='rgba(255,255,255,0.55)'}}>
+                    <span>{showAnalytics?'Скрыть аналитику':'Показать аналитику модели (для оценки)'}</span>
+                    <svg style={{transform:showAnalytics?'rotate(180deg)':'none',transition:'transform 0.3s'}} width="14" height="14" viewBox="0 0 16 16" fill="none">
+                      <polyline points="4,6 8,10 12,6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </button>
+                  {showAnalytics && (
+                    <div style={{
+                      marginTop:10,padding:'14px 16px',borderRadius:12,
+                      background:'rgba(255,255,255,0.03)',border:'1px solid rgba(255,255,255,0.07)',
+                      display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:'10px 18px',
+                      textAlign:'left',
+                      animation:'fade-up 0.3s cubic-bezier(0.16,1,0.3,1) both',
+                    }}>
+                      {/* "Вероятность события" intentionally omitted — it is the
+                          big number already shown above, no need to repeat. */}
+                      <AnalyticsMetric
+                        label="Базовая частота"
+                        value={`${Math.round(result.posRate*100)}%`}
+                        hint="на обучающей выборке"
+                        valueColor="rgba(255,255,255,0.85)"
+                      />
+                      <AnalyticsMetric
+                        label="Адаптивный порог"
+                        value={result.adaptiveThreshold.toFixed(3)}
+                        hint="p70 валидации"
+                        valueColor="rgba(255,255,255,0.85)"
+                      />
+                      <AnalyticsMetric
+                        label="Отклонение от порога"
+                        value={(result.signalScore >= 0 ? '+' : '') + (result.signalScore*100).toFixed(1) + ' п.п.'}
+                        hint="нейтральный сигнал — ±3 п.п."
+                        valueColor={verdictStyles[result.verdictColor].color}
+                      />
+                      <AnalyticsMetric
+                        label="Сила сигнала"
+                        value={result.verdict}
+                        hint="из 5 возможных"
+                        valueColor={verdictStyles[result.verdictColor].color}
+                      />
+                      {result.rankPosition && (
+                        <AnalyticsMetric
+                          label="Место в рейтинге"
+                          value={`${result.rankPosition} / ${result.rankTotal}`}
+                          hint="по силе сигнала"
+                          valueColor="rgba(255,255,255,0.85)"
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Ranking — top-5 strongest / weakest signals across all companies */}
+            <RankingPanel
+              ranking={ranking}
+              group={rankingMeta?.group}
+              adaptive={rankingMeta?.adaptive ?? result.adaptiveThreshold}
+              posRate={rankingMeta?.posRate ?? result.posRate}
+              thrPct={rankingMeta?.thr ?? result.threshold}
+              currentTicker={company.ticker}
+              progress={rankingProgress}
+              error={rankingError}
+              horizonLabel={`Срок: ${humanHorizonBare(result.trainedOn)}`}
+            />
+
+            {/* Technical explanation — only when analytics is expanded,
+                to avoid duplicating the plain-language block above. */}
+            {showAnalytics && (
+              <div className="glass" style={{borderRadius:16,padding:'24px',marginBottom:16,marginTop:16}}>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.06em',fontWeight:600,marginBottom:10}}>ФОРМАЛЬНОЕ ОПИСАНИЕ</div>
+                <p style={{fontSize:14,color:'rgba(255,255,255,0.7)',lineHeight:1.65,fontWeight:400,margin:0}}>{result.explanation}</p>
+              </div>
+            )}
+
+            {/* All technical content — confidence, factors, chart, AUC —
+                gated behind the SAME "Показать аналитику" toggle as the
+                analytics grid inside the verdict card. Single source of
+                truth so the public layout has no leaked jargon. */}
+            {showAnalytics && (
+              <div className="glass" style={{borderRadius:16,padding:'20px 24px',marginBottom:16,marginTop:8,animation:'fade-up 0.3s cubic-bezier(0.16,1,0.3,1) both'}}>
+                <div style={{display:'flex',alignItems:'center',gap:16,flexWrap:'wrap'}}>
+                  <div style={{minWidth:180}}>
+                    <div style={{fontSize:12,color:'rgba(255,255,255,0.35)',letterSpacing:'0.06em',fontWeight:600,marginBottom:4}}>НАСКОЛЬКО ЯРКИЙ СИГНАЛ</div>
+                    <div style={{fontSize:18,fontWeight:700,color:'#f1f5f9',textTransform:'capitalize'}}>{result.confidence}</div>
+                  </div>
+                  <div style={{flex:1,minWidth:120}}>
+                    <ProgressBar value={result.confVal} color='linear-gradient(to right,#7c3aed,#06b6d4)' animated={true}/>
+                    <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginTop:4,textAlign:'right'}}>{result.confVal}%</div>
+                  </div>
+                </div>
+                <div style={{fontSize:13,color:'rgba(255,255,255,0.55)',marginTop:10,lineHeight:1.5}}>
+                  {result.confVal > 65
+                    ? 'Модель видит заметный сигнал — отклонение от обычной картины выраженное.'
+                    : (result.confVal > 35
+                      ? 'Сигнал есть, но он не категоричный — отклонение от обычной картины умеренное.'
+                      : 'Модель не видит сильного перевеса — текущая картина похожа на обычную для этой акции на таком сроке.')}
+                </div>
+              </div>
+            )}
+
+            {/* Factors + mini chart — same gate, no separate "Подробнее"
+                button. Cleaner two-layer split between public and analytics. */}
+            {showAnalytics && (
+              <div className="glass" style={{borderRadius:16,padding:'28px',marginTop:8,animation:'fade-up 0.4s cubic-bezier(0.16,1,0.3,1) both'}}>
+                <div style={{fontWeight:700,fontSize:15,color:'#f1f5f9',marginBottom:20}}>Что повлияло на сигнал</div>
+                <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                  {result.factors.map(f=>(
+                    <div key={f.key}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                        <div>
+                          <span style={{fontSize:14,fontWeight:600,color:'rgba(255,255,255,0.85)'}}>{f.label}</span>
+                          <span style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:8}}>{f.desc}</span>
+                        </div>
+                        <div style={{
+                          fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:99,
+                          background:f.positive?'rgba(34,197,94,0.12)':'rgba(239,68,68,0.12)',
+                          color:f.positive?'#4ade80':'#f87171',
+                          border:`1px solid ${f.positive?'rgba(34,197,94,0.2)':'rgba(239,68,68,0.2)'}`,
+                        }}>
+                          {f.positive?'↑ толкает вверх':'↓ тянет вниз'}
+                        </div>
+                      </div>
+                      <ProgressBar value={f.impact} color={f.positive?'rgba(34,197,94,0.7)':'rgba(239,68,68,0.7)'} animated={true}/>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{marginTop:28,paddingTop:20,borderTop:'1px solid rgba(255,255,255,0.07)'}}>
+                  {/* Mini chart */}
+                  <div style={{fontWeight:700,fontSize:14,color:'rgba(255,255,255,0.6)',marginBottom:10}}>График за последние 30 дней</div>
+                  <div style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 8px 8px',border:'1px solid rgba(255,255,255,0.06)',marginBottom:20}}>
+                    <MiniChart points={result.chartPts}/>
+                    <div style={{display:'flex',justifyContent:'space-between',marginTop:6,padding:'0 4px'}}>
+                      <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.25)'}}>-30д</span>
+                      <span style={{fontFamily:'JetBrains Mono',fontSize:11,color:'rgba(255,255,255,0.25)'}}>сегодня</span>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}}>
+                    <span style={{fontSize:14,color:'rgba(255,255,255,0.5)',fontWeight:500}}>Историческая точность (AUC)</span>
+                    <span style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:18,color:'#c4b5fd'}}>{result.auc}</span>
+                  </div>
+                  <ProgressBar value={(result.auc-0.5)/0.5*100} color='rgba(124,58,237,0.8)' animated={true}/>
+                  <div style={{fontSize:12,color:'rgba(255,255,255,0.25)',marginTop:6}}>{result.modelNote || `Модель обучена на данных MOEX 2015–2024 гг.`}</div>
+                </div>
+
+                <div style={{marginTop:20,padding:'12px 16px',borderRadius:10,background:'rgba(234,179,8,0.07)',border:'1px solid rgba(234,179,8,0.15)'}}>
+                  <p style={{fontSize:12,color:'rgba(234,179,8,0.75)',lineHeight:1.55}}>
+                    ⚠ Прогноз носит информационный характер и не является инвестиционной рекомендацией. Прошлая доходность не гарантирует будущих результатов.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* ── ABOUT ────────────────────────────────────────────────────── */
+function About() {
+  const cards = [
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="16" height="16" rx="4" stroke="#06b6d4" strokeWidth="1.5"/><path d="M7 11l2.5 2.5L15 8" stroke="#06b6d4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      color:'#06b6d4',title:'Официальные данные',
+      desc:'Котировки, объёмы и дивиденды с Московской биржи. Данные проходят верификацию перед обучением модели.'
+    },
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 3L4 7v5c0 4 3.5 7.7 7 8.5 3.5-.8 7-4.5 7-8.5V7L11 3z" stroke="#7c3aed" strokeWidth="1.5" strokeLinejoin="round"/><path d="M8 11l2 2 4-4" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      color:'#7c3aed',title:'Защита от ошибок',
+      desc:'Кросс-валидация на отложенной выборке. Модель не подвержена переобучению: тест — только на данных которых не видела.'
+    },
+    {
+      icon:<svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="8" stroke="#f97316" strokeWidth="1.5"/><path d="M11 7v4l2.5 2.5" stroke="#f97316" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+      color:'#f97316',title:'Понятный результат',
+      desc:'Вероятность, вердикт и объяснение без жаргона. Вы понимаете что произошло и почему — без опыта в трейдинге.'
+    },
+  ];
+
+  return (
+    <section id="about" style={{padding:'100px 0 80px',borderTop:'1px solid rgba(255,255,255,0.05)'}}>
+      <div style={{maxWidth:1000,margin:'0 auto',padding:'0 24px'}}>
+        <div style={{textAlign:'center',marginBottom:56}}>
+          <h2 style={{fontFamily:'Manrope',fontWeight:800,fontSize:'clamp(28px,4vw,44px)',letterSpacing:'-0.03em',color:'#f1f5f9',marginBottom:16}}>
+            О <span className="grad-text">методологии</span>
+          </h2>
+          <p style={{maxWidth:600,margin:'0 auto',fontSize:16,color:'rgba(255,255,255,0.5)',lineHeight:1.65}}>
+            Мы используем три <strong style={{color:'#c4b5fd'}}>TCN-сети</strong> (Temporal Convolutional Network), обученные на 24 ликвидных тикерах MOEX 2015-сегодня. Каждая модель отвечает за свой горизонт: short — 5 дней (порог +3%), medium — 30 дней (+5%), long — 120 дней (+12%). На вход 30 торговых дней по 28 признакам: лестница лог-доходностей, тренды по SMA-20/200, RSI-14, объёмные соотношения, дивидендная доходность TTM, индекс IMOEX и курс USD/RUB. Инференс происходит прямо в браузере — backend не используется.
+          </p>
+        </div>
+
+        {/* Metric row */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:16,marginBottom:48}}>
+          {[
+            ['TCN','архитектура сети'],
+            ['28','входных факторов'],
+            ['30 дн.','длина контекста'],
+            ['54','тикера в базе'],
+          ].map(([v,l])=>(
+            <div key={l} className="glass" style={{borderRadius:16,padding:'24px 20px',textAlign:'center'}}>
+              <div style={{fontFamily:'JetBrains Mono',fontWeight:700,fontSize:24,color:'#c4b5fd',marginBottom:6}}>{v}</div>
+              <div style={{fontSize:13,color:'rgba(255,255,255,0.4)'}}>{l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Cards */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))',gap:18}}>
+          {cards.map(c=>(
+            <div key={c.title} className="glass" style={{borderRadius:18,padding:'28px 24px',transition:'all 0.25s'}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=`${c.color}44`;e.currentTarget.style.background='rgba(255,255,255,0.07)'}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,0.08)';e.currentTarget.style.background='rgba(255,255,255,0.04)'}}>
+              <div style={{
+                width:44,height:44,borderRadius:12,display:'flex',alignItems:'center',justifyContent:'center',
+                background:`${c.color}18`,border:`1px solid ${c.color}33`,marginBottom:18,
+              }}>{c.icon}</div>
+              <div style={{fontWeight:700,fontSize:16,color:'#f1f5f9',marginBottom:8}}>{c.title}</div>
+              <div style={{fontSize:14,color:'rgba(255,255,255,0.45)',lineHeight:1.6}}>{c.desc}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{marginTop:60,textAlign:'center',fontSize:13,color:'rgba(255,255,255,0.2)'}}>
+          © 2025 StockAI RU — Прогноз акций российского рынка · Данные: ММВБ · Не является инвестиционной рекомендацией
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ── APP ──────────────────────────────────────────────────────── */
+function App() {
+  const [selectedCompany, setSelectedCompany] = useState(null);
+  const forecastRef = useRef(null);
+  const catalogRef = useRef(null);
+
+  const scrollTo = (id) => {
+    const el = document.querySelector(id);
+    if(el) window.scrollTo({top:el.offsetTop-60, behavior:'smooth'});
+  };
+
+  const handleSelectCompany = (company) => {
+    setSelectedCompany(company);
+    setTimeout(()=>{
+      const el = document.querySelector('#forecast');
+      if(el) window.scrollTo({top:el.offsetTop-70, behavior:'smooth'});
+    }, 50);
+  };
+
+  return (
+    <>
+      <Nav onNav={id=>{
+        if(id==='#forecast'&&!selectedCompany){ scrollTo('#catalog'); return; }
+        scrollTo(id);
+      }}/>
+      <main>
+        <Hero onStart={()=>scrollTo('#catalog')}/>
+        <Catalog onSelect={handleSelectCompany}/>
+        {selectedCompany && <Forecast key={selectedCompany.ticker} company={selectedCompany}/>}
+        <About/>
+      </main>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
