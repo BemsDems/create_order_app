@@ -140,6 +140,16 @@ class CoverLetterPipeline:
         confidence_reason = str(analyzer_json.get("confidence_reason") or "")
         selected_project = str(analyzer_json.get("selected_project") or "")
         selected_numbers: List[str] = list(analyzer_json.get("selected_numbers") or [])
+        # The validator's `allowed_numbers` is the full CanonicalFacts
+        # whitelist, NOT just the Analyzer's stylistic subset. The opener
+        # pool always injects `experience_years` (e.g. "3+ года"), and
+        # Analyzer often picks only "impressive" numbers (5, 11000) — that
+        # combination produced spurious `invented_number: '3'` violations
+        # in v3.
+        validator_allowed_numbers: List[str] = list(self.facts.allowed_numbers)
+        for n in selected_numbers:
+            if n not in validator_allowed_numbers:
+                validator_allowed_numbers.append(n)
 
         # Hard skip on very low confidence — emit a result with no letter.
         if confidence < self.config.skip_below_confidence:
@@ -210,7 +220,7 @@ class CoverLetterPipeline:
             det = validate_deterministic(
                 last_letter,
                 facts=self.facts,
-                allowed_numbers=selected_numbers,
+                allowed_numbers=validator_allowed_numbers,
                 min_words=self.config.min_words,
                 max_words=self.config.max_words,
                 universal_mode=universal_mode,
@@ -236,7 +246,7 @@ class CoverLetterPipeline:
                         self.llm,
                         last_letter,
                         analyzer_json,
-                        selected_numbers or list(self.facts.allowed_numbers),
+                        validator_allowed_numbers,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Semantic validator errored, treating as passed: %s", exc)

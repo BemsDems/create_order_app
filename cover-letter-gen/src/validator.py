@@ -219,9 +219,11 @@ def validate_deterministic(
                 fix_hint="В первое предложение добавь число лет опыта (например, «3+ года»).",
             ))
 
-    # 6. Numeric whitelist (subset selected by Analyzer).
+    # 6. Numeric whitelist (subset selected by Analyzer). Version digits
+    # in patterns like "Python 3.10" are excluded — they're not metrics.
     allowed_set = {n.strip() for n in allowed_numbers_list if n}
-    found_numbers = _extract_numbers(text)
+    version_safe_tech = BASE_ALLOWED_TECH | facts.allowed_tech
+    found_numbers = _extract_numbers(text, tech_whitelist=version_safe_tech)
     used_numbers: List[str] = []
     for n in found_numbers:
         if n not in allowed_set:
@@ -274,12 +276,19 @@ def validate_deterministic(
 
     # 9. Unknown tech tokens (PascalCase / mixed-case identifiers not in the
     # union of base + project tech + project names + company names).
-    tech_allowed = (
+    # Multi-word allowed terms (e.g. "Secure Storage", "Clean Architecture")
+    # also implicitly allow their constituent words — the token extractor
+    # below only sees single identifiers, so without this we'd flag every
+    # half of every multi-word tech as unknown_tech_term.
+    tech_allowed: set[str] = (
         BASE_ALLOWED_TECH
         | facts.allowed_tech
         | facts.allowed_project_names
         | facts.allowed_company_names
     )
+    for term in list(tech_allowed):
+        if " " in term:
+            tech_allowed.update(term.split())
     used_tech: List[str] = []
     for token in _find_tech_identifiers(text):
         if token in tech_allowed:
@@ -360,9 +369,30 @@ async def validate_semantic(
 
 _WORD_RE = re.compile(r"[\w’'-]+", re.UNICODE)
 
-# A digit token at word boundaries, optionally followed by '+'.
-# Matches "3", "3+", "11000" but NOT "2" inside "B2B".
-_OPENER_YEARS_RE = re.compile(r"(?:(?<=\s)|^)\d+\+?(?=\s|\b)")
+# Match either:
+#  (a) a 1-2 digit token (optionally with '+') followed by a Russian
+#      "year" marker — "3+ года", "5 лет", "11+ лет";
+#  (b) a Russian word-number ("один".."пятнадцать", "десять", "двадцать")
+#      followed by a year marker — "три года", "пять лет".
+# The digit form must NOT be preceded by another letter or digit, so
+# "2024 год" (date) and "B2B" don't match.
+#
+# Examples that DO NOT match: "В 2024 году я начал...",
+# "Опыт работы с 5 проектами в течение многих лет.",
+# "100 лет" (too many digits for plausible experience).
+_YEAR_WORD_NUMBER_RE = (
+    r"(?:один|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|"
+    r"одиннадцать|двенадцать|тринадцать|четырнадцать|пятнадцать|"
+    r"шестнадцать|семнадцать|восемнадцать|девятнадцать|двадцать)"
+)
+_OPENER_YEARS_RE = re.compile(
+    r"(?:"
+    r"(?<![A-Za-zА-Яа-яЁё\d])\d{1,2}\+?\s*(?:год|года|лет)\b"
+    r"|"
+    rf"\b{_YEAR_WORD_NUMBER_RE}(?:\s+с\s+лишним)?\s+(?:год|года|лет)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _word_count(text: str) -> int:
@@ -380,11 +410,40 @@ def _opener_has_years(first_sentence: str) -> bool:
 
 _NUMBER_TOKEN_RE = re.compile(r"(?<!\w)(\d[\d\s]{0,4}\d|\d)\+?(?!\w)")
 
+# "<tech> <version>" pattern — e.g. "Python 3.10", "iOS 17", "Dart 3".
+# The version digit(s) here are NOT real metrics and should not be
+# flagged as invented_number.
+_TECH_VERSION_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9+/#-]*)\s+(\d+(?:\.\d+)?)\b"
+)
 
-def _extract_numbers(text: str) -> List[str]:
+
+def _extract_numbers(
+    text: str,
+    *,
+    tech_whitelist: Optional[set[str]] = None,
+) -> List[str]:
+    """Extract numeric tokens from `text`.
+
+    If `tech_whitelist` is provided, version-style digits immediately
+    preceded by a tech-whitelist word (e.g. "Python 3.10", "iOS 17",
+    "Dart 3") are excluded — they are version numbers, not metrics.
+    """
+    excluded_spans: List[tuple[int, int]] = []
+    if tech_whitelist:
+        tech_lower = {t.lower() for t in tech_whitelist}
+        for m in _TECH_VERSION_RE.finditer(text):
+            if m.group(1).lower() in tech_lower:
+                excluded_spans.append((m.start(2), m.end(2)))
+
+    def _in_excluded(pos: int) -> bool:
+        return any(start <= pos < end for start, end in excluded_spans)
+
     out: List[str] = []
-    for raw in _NUMBER_TOKEN_RE.findall(text):
-        normalized = re.sub(r"\s+", "", raw)
+    for m in _NUMBER_TOKEN_RE.finditer(text):
+        if _in_excluded(m.start()):
+            continue
+        normalized = re.sub(r"\s+", "", m.group(1))
         if normalized:
             out.append(normalized)
     return out

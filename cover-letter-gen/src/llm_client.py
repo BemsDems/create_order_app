@@ -140,6 +140,21 @@ class LLMClient:
                 self._json_mode_cache[endpoint] = False
                 continue
 
+            if resp.status_code == 429:
+                # Rate-limited. Honor Retry-After if present; otherwise use a
+                # doubled exponential backoff.
+                retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                wait = retry_after if retry_after is not None else _backoff(attempt) * 2
+                last_exc = httpx.HTTPStatusError(
+                    "rate limited (429)", request=resp.request, response=resp,
+                )
+                logger.warning(
+                    "LLM 429 rate-limited (attempt %d/%d); sleeping %.2fs",
+                    attempt, self.config.max_retries, wait,
+                )
+                await asyncio.sleep(wait)
+                continue
+
             if 500 <= resp.status_code < 600:
                 last_exc = httpx.HTTPStatusError(
                     f"server {resp.status_code}", request=resp.request, response=resp
@@ -152,12 +167,25 @@ class LLMClient:
                 continue
 
             if resp.status_code >= 400:
-                # 4xx other than 400 — don't retry, surface error.
+                # 4xx other than 400/429 — don't retry, surface error.
                 resp.raise_for_status()
 
             self._json_mode_cache.setdefault(endpoint, json_mode_supported)
             self.stats.json_mode_supported = json_mode_supported
-            return _extract_content(resp.json())
+            content = _extract_content(resp.json())
+            if not content:
+                # The provider returned a 200 but no usable content.
+                # Treat as a transient error and retry rather than letting
+                # the caller deal with an empty string (which usually leads
+                # to confusing downstream validation failures).
+                last_exc = RuntimeError("empty content from provider")
+                logger.warning(
+                    "LLM returned empty content (attempt %d/%d); retrying",
+                    attempt, self.config.max_retries,
+                )
+                await asyncio.sleep(_backoff(attempt))
+                continue
+            return content
 
         # Exhausted retries.
         self.stats.last_error = str(last_exc) if last_exc else "unknown"
@@ -183,3 +211,22 @@ def _extract_content(data: Dict[str, Any]) -> str:
 def _backoff(attempt: int) -> float:
     """Exponential backoff: 0.5s, 1.0s, 2.0s, capped at 8s."""
     return min(0.5 * (2 ** (attempt - 1)), 8.0)
+
+
+def _parse_retry_after(header_value: Optional[str]) -> Optional[float]:
+    """Parse a `Retry-After` header value as seconds.
+
+    Per RFC 7231 the value can be either an integer number of seconds or an
+    HTTP-date. We only support the integer form here — that's what all the
+    OpenAI-compatible providers actually emit. Capped at 60s to avoid a
+    runaway sleep on a misconfigured proxy.
+    """
+    if not header_value:
+        return None
+    try:
+        seconds = float(header_value.strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, 60.0)

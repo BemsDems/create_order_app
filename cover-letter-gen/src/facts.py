@@ -120,6 +120,8 @@ def extract_canonical_facts(
     for position in profile.positions:
         if position.company.strip():
             all_companies.add(position.company.strip())
+        if position.industry.strip():
+            text_chunks.append(position.industry)
         for project in position.projects:
             facts = _project_facts_from(project, position.company, position.industry)
             project_facts[project.name] = facts
@@ -204,22 +206,51 @@ def vacancy_fit(facts: CanonicalFacts, vacancy: Vacancy, primary_skills: List[st
     the candidate's primary skills (Flutter, Dart, Mobile, ...), skip it
     without an LLM call. Saves tokens AND avoids the model being tempted
     to invent matching experience.
+
+    Multi-word tech tokens (e.g. "Clean Architecture", "Secure Storage")
+    are matched as substrings against the full lowercased vacancy text —
+    single-word tokenization can't see them.
     """
     text_parts: List[str] = [vacancy.title or "", vacancy.description or ""]
     text_parts.extend(vacancy.requirements or [])
     text_parts.extend(vacancy.tags or [])
     text = " ".join(p for p in text_parts if p)
+    text_lower = text.lower()
     tokens_lower = {m.group(0).lower() for m in _FIT_WORD_RE.finditer(text)}
 
     matched: List[str] = []
     matched_set: Set[str] = set()
     for tech in facts.allowed_tech:
-        if tech.lower() in tokens_lower and tech.lower() not in matched_set:
-            matched.append(tech)
-            matched_set.add(tech.lower())
+        if not tech.strip():
+            continue
+        tech_lower = tech.lower()
+        if tech_lower in matched_set:
+            continue
+        if " " in tech_lower:
+            # Multi-word tokens — substring match on the full lowercased text.
+            if tech_lower in text_lower:
+                matched.append(tech)
+                matched_set.add(tech_lower)
+        else:
+            # Single-word tokens — exact word match to avoid false positives
+            # like "dart" matching inside "darts".
+            if tech_lower in tokens_lower:
+                matched.append(tech)
+                matched_set.add(tech_lower)
 
-    primary_lower = {s.lower() for s in primary_skills if s.strip()}
-    primary_match = bool(primary_lower & tokens_lower)
+    primary_match = False
+    for skill in primary_skills:
+        if not skill.strip():
+            continue
+        skill_lower = skill.lower()
+        if " " in skill_lower:
+            if skill_lower in text_lower:
+                primary_match = True
+                break
+        else:
+            if skill_lower in tokens_lower:
+                primary_match = True
+                break
 
     return VacancyFit(
         overlap_count=len(matched),

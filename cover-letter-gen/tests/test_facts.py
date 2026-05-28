@@ -134,3 +134,81 @@ def test_vacancy_fit_uses_requirements_and_tags():
     )
     fit = vacancy_fit(facts, vac, _profile().skills_primary)
     assert fit.primary_match is True
+
+
+# ---------- v4 ----------
+
+
+def test_vacancy_fit_matches_multi_word_tech():
+    """Multi-word tech tokens like 'Clean Architecture' must be matched —
+    in v3 they were silently invisible to the fit gate."""
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v4",
+        title="Mobile Engineer",
+        description=(
+            "We use Clean Architecture and Secure Storage with gRPC. "
+            "Flutter not strictly required, but Dart helpful."
+        ),
+    )
+    fit = vacancy_fit(facts, vac, _profile().skills_primary)
+    assert "Clean Architecture" in fit.matched_terms
+    assert fit.overlap_count >= 1
+
+
+def test_vacancy_fit_matches_multi_word_primary_skill():
+    """Primary skills can be multi-word too (e.g. 'Clean Architecture')."""
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v4b",
+        title="Backend dev",
+        description="We follow Clean Architecture rigorously.",
+    )
+    primary = ["Clean Architecture"]
+    fit = vacancy_fit(facts, vac, primary)
+    assert fit.primary_match is True
+
+
+def test_vacancy_fit_single_word_still_exact_match():
+    """Sanity: single-word tech must NOT match as a substring inside a
+    longer word — 'dart' should not match 'darts'."""
+    facts = extract_canonical_facts(_profile())
+    vac = Vacancy(
+        id="v4c",
+        title="Game dev",
+        description="Throwing darts in our office tournament.",
+    )
+    fit = vacancy_fit(facts, vac, _profile().skills_primary)
+    # 'darts' must NOT be matched as 'Dart' tech.
+    matched_lower = {t.lower() for t in fit.matched_terms}
+    assert "dart" not in matched_lower
+
+
+def test_position_industry_lands_in_profile_text_lower():
+    """Industry='Финтех' on the position must make 'финтех' a known word
+    so the forbidden_claim grounding doesn't flag it."""
+    p = Profile(
+        name="X",
+        experience_years=3,
+        skills_primary=["Flutter"],
+        positions=[
+            Position(
+                title="Flutter-разработчик",
+                company="Bank",
+                industry="Финтех",
+                projects=[
+                    Project(
+                        name="App",
+                        description="Banking application.",
+                        tech_stack=["Flutter"],
+                        achievements=["Сделал что-то полезное."],
+                    ),
+                ],
+            ),
+        ],
+    )
+    facts = extract_canonical_facts(p, forbidden_claims=["финтех"])
+    assert "финтех" in facts.profile_text_lower
+    # Because "финтех" is now present in the profile text, it must be
+    # filtered out of the grounded forbidden list.
+    assert "финтех" not in facts.forbidden_claims_grounded()
