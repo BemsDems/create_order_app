@@ -58,11 +58,26 @@ async def write_letter(
     return _strip_signature_lines(raw)
 
 
-def _strip_signature_lines(text: str) -> str:
-    """Remove a trailing 'С уважением, …\\n<name>' block if the model added one.
+_SIGNATURE_PREFIXES: tuple[str, ...] = (
+    "с уважением",
+    "с наилучшими",
+    "спасибо за внимание",
+    "спасибо за рассмотрение",
+    "благодарю за внимание",
+    "благодарю за рассмотрение",
+    "до связи",
+    "best regards",
+    "kind regards",
+    "regards,",
+    "sincerely",
+)
 
-    Walks the text from the bottom up and cuts off everything from the line
-    that starts with 'С уважением' onward.
+
+def _strip_signature_lines(text: str) -> str:
+    """Remove a trailing signature block if the model added one.
+
+    Walks the text from the bottom up and cuts off everything from the
+    first line matching `_SIGNATURE_PREFIXES` onward.
     """
     lines = text.splitlines()
     while lines and not lines[-1].strip():
@@ -70,7 +85,7 @@ def _strip_signature_lines(text: str) -> str:
 
     for idx in range(len(lines) - 1, -1, -1):
         stripped = lines[idx].strip().lower()
-        if stripped.startswith("с уважением"):
+        if any(stripped.startswith(prefix) for prefix in _SIGNATURE_PREFIXES):
             lines = lines[:idx]
             break
 

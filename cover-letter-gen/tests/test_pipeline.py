@@ -428,6 +428,51 @@ async def test_writer_system_prompt_has_no_digit_length_constraints():
 
 
 @pytest.mark.asyncio
+async def test_analyzer_drops_ungrounded_hook_phrase():
+    """v4: hook_phrase must come from the vacancy text. If the LLM invents
+    one ('сотни тысяч пользователей'), grounding drops it before the Writer
+    sees it."""
+    response = dict(_ANALYZER_RESPONSE)
+    response["hook_phrase"] = "сотни тысяч пользователей и миллиарды транзакций"
+    # This phrase appears nowhere in _make_vacancy() — so it must be dropped.
+
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(response, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [_GOOD_LETTER],
+        VALIDATOR_SYSTEM: [json.dumps({"passed": True, "violations": []})],
+    })
+    profile = _make_profile()
+    pipeline = CoverLetterPipeline(llm, profile, config=PipelineConfig())
+    result = await pipeline.generate(_make_vacancy())
+
+    # Grounding zeroed out the ungrounded hook.
+    assert result.analyzer_json["hook_phrase"] == ""
+    # Writer's user prompt should NOT contain the invented phrase.
+    writer_call = next(c for c in llm.calls if c["system"] == WRITER_SYSTEM_STANDARD)
+    assert "сотни тысяч" not in writer_call["user"]
+
+
+@pytest.mark.asyncio
+async def test_analyzer_keeps_hook_phrase_when_grounded():
+    """A hook with words actually appearing in the vacancy must survive."""
+    response = dict(_ANALYZER_RESPONSE)
+    # _make_vacancy() description mentions 'корпоративное приложение для сотрудников'
+    response["hook_phrase"] = "корпоративное приложение для сотрудников магазинов"
+
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(response, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [_GOOD_LETTER],
+        VALIDATOR_SYSTEM: [json.dumps({"passed": True, "violations": []})],
+    })
+    profile = _make_profile()
+    pipeline = CoverLetterPipeline(llm, profile, config=PipelineConfig())
+    result = await pipeline.generate(_make_vacancy())
+
+    # Hook should be preserved (grounding finds enough significant overlap).
+    assert result.analyzer_json["hook_phrase"] != ""
+
+
+@pytest.mark.asyncio
 async def test_repeat_violation_escalates_to_hard_constraint():
     """If the same violation appears twice in a row, the next Writer prompt
     must contain a 'СТРОГО' hard-constraint section."""

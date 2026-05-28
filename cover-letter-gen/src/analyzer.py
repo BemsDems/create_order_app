@@ -92,7 +92,7 @@ async def analyze(
             )
             continue
 
-        return _ground(parsed, facts=facts)
+        return _ground(parsed, facts=facts, vacancy=vacancy)
 
     raise ValueError(
         f"Analyzer failed to return valid JSON after {max_parse_retries + 1} attempts. "
@@ -102,6 +102,52 @@ async def analyze(
 
 def _vacancy_to_dict(v: Vacancy) -> Dict[str, Any]:
     return asdict(v)
+
+
+# Russian/English stopwords stripped before hook overlap check — we want
+# at least 2 *significant* words to overlap, not just "и", "в", "the".
+_HOOK_STOPWORDS = {
+    "и", "в", "на", "с", "по", "к", "у", "о", "из", "для", "от", "до",
+    "за", "над", "под", "при", "не", "ни", "же", "ли", "бы",
+    "the", "a", "an", "of", "to", "in", "for", "and", "or", "with",
+}
+_HOOK_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9-]*", re.UNICODE)
+
+
+def _hook_significant_words(hook: str) -> List[str]:
+    """Lowercase content-words from a hook phrase (3+ chars, not stopwords)."""
+    words = [m.group(0).lower() for m in _HOOK_WORD_RE.finditer(hook)]
+    return [w for w in words if len(w) >= 3 and w not in _HOOK_STOPWORDS]
+
+
+def _hook_grounded_in_vacancy(hook: str, vacancy: Vacancy) -> bool:
+    """True iff at least 2 significant words from `hook` appear in the
+    vacancy text (or 1 word if the hook itself has only 1-2 significant words).
+
+    Pure-substring check; we don't try to match inflected forms beyond
+    what the prefix-3 trick gives us (good enough for Russian).
+    """
+    significant = _hook_significant_words(hook)
+    if not significant:
+        return False
+    text_lower = " ".join(
+        p for p in [
+            vacancy.title or "",
+            vacancy.description or "",
+            *(vacancy.requirements or []),
+            *(vacancy.tags or []),
+        ] if p
+    ).lower()
+    threshold = 2 if len(significant) >= 3 else 1
+    hits = 0
+    for word in significant:
+        # 3-char prefix match — catches Russian inflections cheaply
+        # (e.g. "сотрудник" / "сотрудниками").
+        if word[:3] in text_lower or word in text_lower:
+            hits += 1
+            if hits >= threshold:
+                return True
+    return False
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -129,11 +175,16 @@ def _try_parse_json(raw: str) -> Optional[Dict[str, Any]]:
     return parsed
 
 
-def _ground(parsed: Dict[str, Any], *, facts: CanonicalFacts) -> Dict[str, Any]:
-    """Filter the Analyzer's output against CanonicalFacts.
+def _ground(
+    parsed: Dict[str, Any],
+    *,
+    facts: CanonicalFacts,
+    vacancy: Vacancy,
+) -> Dict[str, Any]:
+    """Filter the Analyzer's output against CanonicalFacts and the vacancy.
 
-    This is the anti-hallucination teeth: even if the LLM made up a number
-    or a project, those don't survive past this function.
+    This is the anti-hallucination teeth: even if the LLM made up a number,
+    a project, or a hook phrase, those don't survive past this function.
     """
     # 1. selected_project must exist in allowed_project_names (case-insensitive).
     raw_project = str(parsed.get("selected_project") or "").strip()
@@ -211,6 +262,17 @@ def _ground(parsed: Dict[str, Any], *, facts: CanonicalFacts) -> Dict[str, Any]:
     except (TypeError, ValueError):
         conf = 0.0
     parsed["confidence"] = max(0.0, min(1.0, conf))
+
+    # 5. hook_phrase must be grounded in the vacancy text. If the LLM
+    # invented a hook (or pulled it from the resume), drop it — the
+    # Writer will fall back to a hook-less second paragraph.
+    raw_hook = str(parsed.get("hook_phrase") or "").strip()
+    if raw_hook and not _hook_grounded_in_vacancy(raw_hook, vacancy):
+        logger.warning(
+            "Analyzer hook %r not grounded in vacancy text; dropping.",
+            raw_hook,
+        )
+        parsed["hook_phrase"] = ""
 
     parsed.setdefault("top_requirements", [])
     parsed.setdefault("honest_gaps", [])

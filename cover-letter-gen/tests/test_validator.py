@@ -237,6 +237,93 @@ def test_snake_case_token_is_flagged_as_meta_leak():
     )
 
 
+# ---------- v4 ----------
+
+
+def test_opener_years_rejects_date_year():
+    """A 4-digit year like '2024 году' must not pass as years-of-experience.
+    The first sentence still needs an actual experience claim."""
+    from src.validator import _first_sentence, _opener_has_years
+    s = "В 2024 году я начал работать с Flutter и BLoC."
+    assert _first_sentence(s).startswith("В 2024 ")
+    assert not _opener_has_years(s)
+
+
+def test_opener_years_rejects_unrelated_digit():
+    """A digit unrelated to years (e.g. project count) must not pass as
+    years-of-experience."""
+    from src.validator import _opener_has_years
+    s = "Опыт работы с 5 проектами в течение многих лет."
+    # The "5 проектами" digit alone shouldn't count; only a "N лет/года"
+    # pattern does. But "многих лет" without a digit also doesn't count.
+    assert not _opener_has_years(s)
+
+
+def test_opener_years_accepts_real_experience_claim():
+    """A canonical opener still passes."""
+    from src.validator import _opener_has_years
+    assert _opener_has_years("3+ года Flutter-разработки.")
+    assert _opener_has_years("Более 5 лет в мобильной разработке.")
+    assert _opener_has_years("11+ лет коммерческой разработки.")
+
+
+def test_tech_version_numbers_are_not_flagged_as_invented():
+    """Version digits in 'Python 3.10', 'iOS 17' must not be flagged as
+    invented_number — they're versions, not metrics. ALLOWED_NUMBERS does
+    not include them, but the extractor must skip them."""
+    text = (
+        "3+ года Flutter-разработки. В OtherMark спроектировал ERP на Clean "
+        "Architecture с DI — 5 модулей со сложной бизнес-логикой. Кодовая база "
+        "11000 строк. Использовал iOS 17 и Dart 3 в production.\n\n"
+        "Опыт с похожими корпоративными системами. BLoC и Clean Architecture "
+        "применялись в проекте с 6 ролями и 20 переиспользуемыми компонентами."
+    )
+    # Allow Dart/iOS in tech to mark them as version-prefixes.
+    facts = _make_facts(
+        allowed_tech={"Flutter", "Dart", "BLoC", "Clean", "Architecture", "iOS"},
+    )
+    result = validate_deterministic(text, facts=facts, allowed_numbers=ALLOWED_NUMBERS)
+    # "17" (iOS 17) and "3" (Dart 3) must not be flagged. "3" happens to
+    # also be the years-of-experience number, which is in ALLOWED_NUMBERS —
+    # so we specifically check that "17" is not in the violations.
+    invented = {v.evidence for v in result.violations if v.rule == "invented_number"}
+    assert "17" not in invented
+
+
+def test_tech_version_minor_digits_are_not_flagged():
+    """Both major and minor of 'Python 3.10' must be excluded."""
+    text = (
+        "3+ года разработки на Flutter. В OtherMark — 5 модулей, "
+        "Python 3.10 в инфраструктуре, 11000 строк кода.\n\n"
+        "BLoC и Clean Architecture применялись в проекте с 6 ролями "
+        "и 20 переиспользуемыми компонентами на нескольких уровнях."
+    )
+    facts = _make_facts(
+        allowed_tech={"Flutter", "Dart", "BLoC", "Clean", "Architecture", "Python"},
+    )
+    result = validate_deterministic(text, facts=facts, allowed_numbers=ALLOWED_NUMBERS)
+    invented = {v.evidence for v in result.violations if v.rule == "invented_number"}
+    # Major "3" matches an existing allowed number so it'd never fire.
+    # Minor "10" must not be flagged.
+    assert "10" not in invented
+
+
+def test_extended_signature_prefixes_are_stripped():
+    """The writer's signature stripper handles more than just 'С уважением'."""
+    from src.writer import _strip_signature_lines
+    base = "Тело письма с фактами.\n\nВторой абзац письма."
+    for tail in (
+        "С уважением,\nИван",
+        "С наилучшими пожеланиями,\nИван",
+        "Спасибо за внимание,\nИван",
+        "Благодарю за рассмотрение моей кандидатуры,\nИван",
+        "Best regards,\nИван",
+        "Sincerely,\nИван",
+    ):
+        out = _strip_signature_lines(base + "\n\n" + tail)
+        assert out.endswith("Второй абзац письма."), f"failed for tail: {tail!r}"
+
+
 def test_universal_mode_skips_too_few_numbers():
     one_para = (
         "3+ года Flutter-разработки в командной среде. "
