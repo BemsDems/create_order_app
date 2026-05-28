@@ -473,6 +473,31 @@ async def test_analyzer_keeps_hook_phrase_when_grounded():
 
 
 @pytest.mark.asyncio
+async def test_experience_years_in_opener_is_not_flagged_when_analyzer_omits_it():
+    """v4: if Analyzer's selected_numbers doesn't include `experience_years`
+    but the opener pool injects '3+ года', the validator must still accept
+    '3' because it's in facts.allowed_numbers. In v3 this caused a spurious
+    invented_number violation."""
+    response = dict(_ANALYZER_RESPONSE)
+    # Analyzer only selects the "impressive" numbers, NOT the years.
+    response["selected_numbers"] = ["11000", "5"]
+
+    llm = FakeLLMClient({
+        ANALYZER_SYSTEM: [json.dumps(response, ensure_ascii=False)],
+        WRITER_SYSTEM_STANDARD: [_GOOD_LETTER],
+        VALIDATOR_SYSTEM: [json.dumps({"passed": True, "violations": []})],
+    })
+    profile = _make_profile()
+    pipeline = CoverLetterPipeline(llm, profile, config=PipelineConfig())
+    result = await pipeline.generate(_make_vacancy())
+
+    assert result.passed, result.violations
+    # The opener "3+ года" used the year — that "3" was OK because it's in
+    # facts.allowed_numbers, even though Analyzer didn't pick it.
+    assert "3" in result.used_numbers
+
+
+@pytest.mark.asyncio
 async def test_repeat_violation_escalates_to_hard_constraint():
     """If the same violation appears twice in a row, the next Writer prompt
     must contain a 'СТРОГО' hard-constraint section."""

@@ -19,6 +19,10 @@
 | `invented_number 10` ловило `"Python 3.10"`, `iOS 17` и т.п. | Извлечение чисел не отличало версии технологий от метрик | `_extract_numbers` принимает `tech_whitelist` и пропускает цифры, идущие сразу после whitelist'нутой tech-имени (`"Python 3.10"`, `"Dart 3"`, `"iOS 17"`) |
 | 429-ответы провайдера падали с raise без ретрая; пустой `content`+`reasoning_content` молча возвращался как `""` | LLM-клиент не различал 429 (rate-limit) и не-эмпти content от провайдера | Добавлено: `429` → backoff с уважением `Retry-After`-заголовка (cap 60s); пустой content → ретрай как transient error; пустой после всех попыток → понятный `RuntimeError("empty content")` |
 | `_strip_signature_lines` срезал только «С уважением», но не «Best regards», «Спасибо», «Sincerely» и т.п. | Хардкод одной фразы | Расширенный whitelist префиксов подписей |
+| Multi-word tech (`Secure Storage`, `Clean Architecture`) флагалось `unknown_tech_term` в валидаторе — токенизатор видел только отдельные слова `Secure`/`Storage` | Тот же класс багов, что 1.1, но в `validate_deterministic` (вторая точка); fix 1.1 покрывал только `vacancy_fit` | `tech_allowed` дополняется составляющими словами из мульти-словных терминов. «Secure Storage» → также разрешает «Secure» и «Storage» |
+| `invented_number 3` для письма с опенером «3+ года» — даже когда у кандидата `experience.total_years: 3` | Валидатор сверялся с `analyzer.selected_numbers` (стилистическая подвыборка Analyzer'а), а не с `facts.allowed_numbers` (полный whitelist). Опенеры всегда подставляют `experience_years` через `{years}+ года`, но Analyzer мог не включить эту цифру в `selected_numbers` | `pipeline` передаёт в валидатор `facts.allowed_numbers` (объединённое с `selected_numbers`), а не только Analyzer-подвыборку |
+| `_opener_has_years` не принимал «За три года...» (только «3 года») | Регэксп ловил только цифровую форму | Поддержка русских словесных числительных «один».."двадцать" + опционально «с лишним» |
+| Mistral систематически писал короткие письма (60-94 слова) | После v3 убраны литералы длины из system prompt, словесного guidance не было — модель видела «два абзаца» и интерпретировала как два предложения | В system prompt добавлено «Каждый абзац — РАЗВЁРНУТЫЙ: минимум четыре-пять полноценных предложений с конкретикой. Не короткое summary». Числительные словами, чтобы не попасть в numeric whitelist |
 
 Добавлены тесты:
 - `tests/test_facts.py`: мульти-словные tech в `vacancy_fit`, `position.industry` в `profile_text_lower`.
@@ -26,7 +30,9 @@
 - `tests/test_pipeline.py`: грааундинг hook'а (выдуманный → стирается, реальный → сохраняется).
 - `tests/test_llm_client.py` (новый файл): 429 + `Retry-After`, пустой content, fallback `reasoning_content`, JSON-mode 400-fallback, parsing `Retry-After`, 5xx ретрай.
 
-Всего 61 тест (39 v3 + 22 v4) проходят локально.
+Всего 64 теста (39 v3 + 25 v4) проходят локально.
+
+Smoke-проверено на NVIDIA Mistral (`mistralai/mistral-large-3-675b-instruct-2512`, `mistralai/mistral-small-4-119b-2603`). До v4: 4-6 нарушений на попытку, большинство — ложные срабатывания (`unknown_tech_term: Secure`, `invented_number: 3`). После v4 — 1-3 реальных нарушения качества модели (`too_short`, `forbidden_phrase: благодаря`); ложноположительных не наблюдалось.
 
 ## Зачем
 

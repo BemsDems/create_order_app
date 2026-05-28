@@ -308,6 +308,39 @@ def test_tech_version_minor_digits_are_not_flagged():
     assert "10" not in invented
 
 
+def test_opener_years_accepts_russian_word_numbers():
+    """v4: 'За три года...', 'За три с лишним года...', 'пять лет' must
+    count as a years-of-experience claim in the opener — small models
+    routinely choose word form over digits."""
+    from src.validator import _opener_has_years
+    for opener in (
+        "За три года коммерческой Flutter-разработки спроектировал ERP.",
+        "За три с лишним года коммерческой разработки на Flutter спроектировал ERP.",
+        "Пять лет коммерческой Flutter-разработки, спроектировал ERP.",
+    ):
+        assert _opener_has_years(opener), f"should match: {opener!r}"
+
+
+def test_multi_word_tech_components_are_not_unknown():
+    """Multi-word allowed tech (e.g. 'Secure Storage') must implicitly allow
+    its constituent words. Otherwise the token extractor flags 'Secure' and
+    'Storage' as unknown_tech_term."""
+    text = (
+        "3+ года Flutter-разработки. В OtherMark спроектировал ERP на Clean "
+        "Architecture с DI — 5 модулей. Кодовая база 11000 строк.\n\n"
+        "Опыт работы с похожими корпоративными системами. В проекте использовал "
+        "BLoC и Secure Storage для хранения чувствительных данных в системе с 6 "
+        "ролями и 20 модулями."
+    )
+    facts = _make_facts(
+        allowed_tech={"Flutter", "Dart", "BLoC", "Clean Architecture", "Secure Storage"},
+    )
+    result = validate_deterministic(text, facts=facts, allowed_numbers=ALLOWED_NUMBERS)
+    unknown = {v.evidence for v in result.violations if v.rule == "unknown_tech_term"}
+    assert "Secure" not in unknown
+    assert "Storage" not in unknown
+
+
 def test_extended_signature_prefixes_are_stripped():
     """The writer's signature stripper handles more than just 'С уважением'."""
     from src.writer import _strip_signature_lines
